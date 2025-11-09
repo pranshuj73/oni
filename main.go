@@ -250,7 +250,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.currentModel.Init() // Re-initialize to refresh continue watching anime
 		}
 		if msg.Entry != nil {
-			return a.continueFromEntry(*msg.Entry, msg.ShowEpisodeSelect)
+			return a.continueFromEntry(*msg.Entry, msg.Episode, msg.ShowEpisodeSelect)
 		}
 
 	case PlayEpisodeResultMsg:
@@ -361,6 +361,7 @@ func (a *App) handleMenuSelection(selection string, showEpisodeSelect bool) (tea
 // ContinueWatchingResultMsg is sent when continue watching fetch is complete
 type ContinueWatchingResultMsg struct {
 	Entry            *anilist.MediaListEntry
+	Episode          int // The episode number to play (calculated based on 95% completion)
 	ShowEpisodeSelect bool
 	Err              error
 }
@@ -409,6 +410,47 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 			}
 		}
 		
+		// Calculate which episode to play based on 95% completion check (same logic as main_menu.go)
+		var episodeToPlay int
+		var isComplete bool
+		
+		if lastEntry.Duration != "" && lastEntry.Timestamp != "" && lastEntry.Timestamp != "00:00:00" {
+			// Parse timestamp (current position)
+			timestampParts := strings.Split(lastEntry.Timestamp, ":")
+			if len(timestampParts) == 3 {
+				hours, _ := strconv.Atoi(timestampParts[0])
+				minutes, _ := strconv.Atoi(timestampParts[1])
+				seconds, _ := strconv.Atoi(timestampParts[2])
+				currentSeconds := hours*3600 + minutes*60 + seconds
+				
+				// Parse duration (total length)
+				durationParts := strings.Split(lastEntry.Duration, ":")
+				if len(durationParts) == 3 {
+					durHours, _ := strconv.Atoi(durationParts[0])
+					durMinutes, _ := strconv.Atoi(durationParts[1])
+					durSeconds, _ := strconv.Atoi(durationParts[2])
+					totalSeconds := durHours*3600 + durMinutes*60 + durSeconds
+					
+					if totalSeconds > 0 {
+						percentage := (float64(currentSeconds) / float64(totalSeconds)) * 100
+						isComplete = percentage >= 95.0
+					}
+				}
+			}
+		}
+		
+		if isComplete {
+			// Play next episode (progress + 1) if previous was 95%+ complete
+			episodeToPlay = lastEntry.Progress + 1
+			// Don't exceed total episodes
+			if lastEntry.EpisodesTotal > 0 && episodeToPlay > lastEntry.EpisodesTotal {
+				episodeToPlay = lastEntry.EpisodesTotal
+			}
+		} else {
+			// Play same episode if not 95% complete
+			episodeToPlay = lastEntry.Progress
+		}
+		
 		// If AniList is available, fetch full anime info
 		if !a.cfg.AniList.NoAniList && a.client != nil {
 			animeInfo, err := a.client.GetAnimeInfo(context.Background(), lastEntry.MediaID)
@@ -419,6 +461,7 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 				}
 				return ContinueWatchingResultMsg{
 					Entry:            &entry,
+					Episode:          episodeToPlay,
 					ShowEpisodeSelect: showEpisodeSelect,
 				}
 			}
@@ -435,6 +478,7 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 		}
 		return ContinueWatchingResultMsg{
 			Entry:            &entry,
+			Episode:          episodeToPlay,
 			ShowEpisodeSelect: showEpisodeSelect,
 		}
 	}
@@ -629,24 +673,31 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 		fmt.Fprintf(os.Stderr, "Warning: Failed to save history on start: %v\n", err)
 	}
 
-	// Update history entry when episode completes successfully
-	if playbackInfo.CompletedSuccessful {
+	// Update history entry with the actual playback position and duration
+	// This ensures we can resume from where we stopped, even if not completed
+	if playbackInfo.StoppedAt != "" && playbackInfo.StoppedAt != "00:00:00" {
 		// Get current timestamp for LastWatched
 		lastWatched := time.Now().Format(time.RFC3339)
 
-		completeEntry := player.HistoryEntry{
+		// Use the duration from playback info if available, otherwise keep the one from start entry
+		duration := playbackInfo.TotalDuration
+		if duration == "" && startEntry.Duration != "" {
+			duration = startEntry.Duration
+		}
+
+		updatedEntry := player.HistoryEntry{
 			MediaID:       a.selectedAnime.ID,
 			Progress:      a.selectedEp,
 			EpisodesTotal: episodesTotal,
 			Timestamp:     playbackInfo.StoppedAt,
-			Duration:      playbackInfo.TotalDuration,
+			Duration:      duration,
 			LastWatched:   lastWatched,
 			Title:         a.selectedAnime.Title.UserPreferred,
 		}
 
-		// Update history entry with completion info
-		if err := player.SaveHistoryEntryWithIncognito(completeEntry, a.incognitoMode); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to save history on completion: %v\n", err)
+		// Update history entry with actual playback position
+		if err := player.SaveHistoryEntryWithIncognito(updatedEntry, a.incognitoMode); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save history after playback: %v\n", err)
 		}
 	}
 
@@ -703,19 +754,19 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 	return a, a.currentModel.Init() // Re-initialize to refresh continue watching anime
 }
 
-func (a *App) continueFromEntry(entry anilist.MediaListEntry, showEpisodeSelect bool) (tea.Model, tea.Cmd) {
+func (a *App) continueFromEntry(entry anilist.MediaListEntry, episode int, showEpisodeSelect bool) (tea.Model, tea.Cmd) {
 	a.selectedAnime = &entry.Media
 	a.selectedEntry = &entry
 
-	nextEp := entry.Progress + 1
-	if entry.Media.Episodes != nil && nextEp > *entry.Media.Episodes {
-		nextEp = entry.Progress
+	// Use the episode number calculated in fetchContinueWatching (based on 95% completion)
+	if episode < 1 {
+		episode = 1
 	}
-	if nextEp < 1 {
-		nextEp = 1
+	if entry.Media.Episodes != nil && episode > *entry.Media.Episodes {
+		episode = *entry.Media.Episodes
 	}
 
-	a.selectedEp = nextEp
+	a.selectedEp = episode
 	a.subOrDub = a.cfg.Playback.SubOrDub
 	if a.subOrDub == "" {
 		a.subOrDub = "sub"
@@ -723,7 +774,9 @@ func (a *App) continueFromEntry(entry anilist.MediaListEntry, showEpisodeSelect 
 
 	if showEpisodeSelect {
 		a.state = StateEpisodeSelect
-		a.currentModel = ui.NewEpisodeSelect(a.cfg, entry.Media, entry.Progress)
+		// Use the calculated episode (based on 95% completion) as the initial progress
+		// This ensures the episode selection matches what the menu displayed
+		a.currentModel = ui.NewEpisodeSelect(a.cfg, entry.Media, episode-1)
 		return a, a.currentModel.Init()
 	}
 
