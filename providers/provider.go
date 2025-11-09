@@ -3,6 +3,8 @@ package providers
 import (
 	"context"
 	"fmt"
+
+	"github.com/pranshuj73/oni/logger"
 )
 
 // Provider defines the interface for anime providers
@@ -34,20 +36,33 @@ type VideoData struct {
 
 // GetProvider returns a provider by name
 func GetProvider(name string) (Provider, error) {
+	logger.Debug("Getting provider", map[string]interface{}{
+		"provider": name,
+	})
+
 	switch name {
 	case "allanime":
+		logger.Info("Using AllAnime provider", nil)
 		return NewAllAnimeProvider(), nil
 	case "aniwatch":
+		logger.Info("Using AniWatch provider", nil)
 		return NewAniWatchProvider(), nil
 	case "yugen":
+		logger.Info("Using Yugen provider", nil)
 		return NewYugenProvider(), nil
 	case "hdrezka":
+		logger.Info("Using HDRezka provider", nil)
 		return NewHDRezkaProvider(), nil
 	case "aniworld":
+		logger.Info("Using AniWorld provider", nil)
 		return NewAniWorldProvider(), nil
 	case "crunchyroll":
+		logger.Info("Using Crunchyroll provider", nil)
 		return NewCrunchyrollProvider(), nil
 	default:
+		logger.Error("Unknown provider", nil, map[string]interface{}{
+			"provider": name,
+		})
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}
 }
