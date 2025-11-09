@@ -53,6 +53,7 @@ type App struct {
 	autoplayMode   bool          // Whether we're in autoplay/binge mode
 	lastAnimeID    int           // Track the last anime watched for session detection
 	lastWatchTime  time.Time     // Track when the last episode was watched
+	incognitoMode  bool          // Runtime incognito mode state
 }
 
 func main() {
@@ -361,8 +362,11 @@ type ContinueWatchingResultMsg struct {
 // fetchContinueWatching fetches the anime to continue watching from local history
 func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 	return func() tea.Msg {
-		// Use local history only
-		history, err := player.LoadHistory()
+		// Get current incognito mode state from main menu
+		a.incognitoMode = a.mainMenu.GetIncognitoMode()
+		
+		// Use incognito or normal history based on current mode
+		history, err := player.LoadHistoryWithIncognito(a.incognitoMode)
 		if err != nil || len(history) == 0 {
 			return ContinueWatchingResultMsg{
 				Err: fmt.Errorf("no anime found to continue watching"),
@@ -481,8 +485,9 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 		return a, nil
 	}
 
-	// Set Discord presence
-	if a.cfg.Discord.DiscordPresence && a.discordMgr.IsEnabled() {
+	// Set Discord presence (only if not in incognito mode)
+	a.incognitoMode = a.mainMenu.GetIncognitoMode()
+	if a.cfg.Discord.DiscordPresence && a.discordMgr.IsEnabled() && !a.incognitoMode {
 		year := 0
 		if a.selectedAnime.StartDate.Year != nil {
 			year = *a.selectedAnime.StartDate.Year
@@ -503,9 +508,9 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 		return a, nil
 	}
 
-	// Check for resume point
+	// Check for resume point (only if episode was completed before)
 	resumeFrom := "00:00:00"
-	historyEntry, _ := player.GetHistoryEntry(a.selectedAnime.ID, a.selectedEp)
+	historyEntry, _ := player.GetHistoryEntryWithIncognito(a.selectedAnime.ID, a.selectedEp, a.incognitoMode)
 	if historyEntry != nil {
 		resumeFrom = historyEntry.Timestamp
 	}
@@ -520,26 +525,29 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 		return a, nil
 	}
 
-	// Always save to local history (independent of AniList)
-	episodesTotal := 9999
-	if a.selectedAnime.Episodes != nil {
-		episodesTotal = *a.selectedAnime.Episodes
+	// Only save to local history if episode was completed successfully
+	if playbackInfo.CompletedSuccessful {
+		episodesTotal := 9999
+		if a.selectedAnime.Episodes != nil {
+			episodesTotal = *a.selectedAnime.Episodes
+		}
+
+		entry := player.HistoryEntry{
+			MediaID:       a.selectedAnime.ID,
+			Progress:      a.selectedEp,
+			EpisodesTotal: episodesTotal,
+			Timestamp:     playbackInfo.StoppedAt,
+			Title:         a.selectedAnime.Title.UserPreferred,
+		}
+
+		// Save to incognito or normal history based on current mode
+		if err := player.SaveHistoryEntryWithIncognito(entry, a.incognitoMode); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save history: %v\n", err)
+		}
 	}
 
-	entry := player.HistoryEntry{
-		MediaID:       a.selectedAnime.ID,
-		Progress:      a.selectedEp,
-		EpisodesTotal: episodesTotal,
-		Timestamp:     playbackInfo.StoppedAt,
-		Title:         a.selectedAnime.Title.UserPreferred,
-	}
-
-	if err := player.SaveHistoryEntry(entry); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to save history: %v\n", err)
-	}
-
-	// Update AniList progress separately (if enabled and episode completed)
-	if playbackInfo.CompletedSuccessful && !a.cfg.AniList.NoAniList && a.client != nil {
+	// Update AniList progress separately (if enabled, episode completed, and NOT in incognito mode)
+	if playbackInfo.CompletedSuccessful && !a.cfg.AniList.NoAniList && !a.incognitoMode && a.client != nil {
 		status := "CURRENT"
 		if a.selectedAnime.Episodes != nil && a.selectedEp >= *a.selectedAnime.Episodes {
 			status = "COMPLETED"

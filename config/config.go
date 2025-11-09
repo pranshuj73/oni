@@ -66,8 +66,9 @@ func Load() (*Config, error) {
 			JSONOutput:      false,
 		},
 		Playback: PlaybackConfig{
-			SubOrDub:     "sub",
-			SubsLanguage: "english",
+			SubOrDub:              "sub",
+			SubsLanguage:          "english",
+			PersistIncognitoSessions: false,
 		},
 		Discord: DiscordConfig{
 			DiscordPresence: false,

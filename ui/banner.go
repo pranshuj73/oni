@@ -65,3 +65,44 @@ func GetBannerGradient() string {
 	
 	return result
 }
+
+// GetBannerGradientIncognito returns the ONI banner with hot pink gradient for incognito mode
+func GetBannerGradientIncognito() string {
+	// Split banner into lines for gradient effect
+	lines := []string{
+		"   ⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣾⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀",
+		"  ⢻⢷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⣿⣿⣿⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⡇",
+		"  ⢸⠀⠻⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⢴⣿⡿⠟⢁⣤⣄⣀⡀⣄⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⠋⢀⠇",
+		"  ⠈⣇⠀⠈⠻⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡴⠞⢀⣤⣶⣿⣯⠟⠉⣏⣉⢻⣿⡏⣦⡉⠙⠲⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⠟⠁⠀⣼⠀",
+		"  ⠀⠹⣆⠀⠀⠈⠛⢦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠞⠋⠀⢀⣰⠏⠈⣿⣇⠐⡻⣿⢟⣽⡟⠀⠈⢻⣄⠀⠀⠙⢷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⡶⠋⠁⠀⠀⣰⠃⠀",
+		"  ⠀⠀⠹⣇⠀⠀⠀⠀⠉⠳⢦⣄⡀⠀⠀⠀⢀⡾⠃⠀⣠⠞⠋⠁⠀⠀⣿⣗⣫⡴⡟⠻⣿⠃⠀⠀⠀⠉⠙⢷⣄⠀⠙⢧⡀⠀⠀⠀⢀⣠⡶⠛⠁⠀⠀⠀⠀⣴⠃⠀⠀",
+		"  ⠀⠀⠀⠙⢧⡀⠀⠀⠀⠀⠀⠈⠙⠳⠶⢤⣿⣄⣀⣸⠋⢠⠀⠀⠸⠛⢻⣧⢠⣿⠃⣰⠏⣶⣿⣧⡀⠀⢠⠀⢹⣆⣀⣨⣷⡤⠶⠚⠋⠁⠀⠀⠀⠀⠀⢠⡾⠃⠀⠀⠀",
+		"  ⠀⠀⠀⠀⠈⠻⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⡇⠈⡇⠀⠀⠀⣾⡟⣼⡞⣴⣏⣠⣿⡿⣿⠿⢘⣄⠀⣼⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⠏⠀⠀⠀⠀⠀",
+		"  ⠀⠀⠀⠀⠀⠀⠈⠻⢦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠀⣧⠀⢀⣾⡟⠁⣽⣇⠻⠿⠟⠃⠀⠉⣠⣾⣿⣶⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⡴⠛⠁⠀⠀⠀⠀⠀⠀",
+		"  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠳⣦⣀⠀⠀⠀⠀⠀⠀⢀⡟⠀⢀⡴⠞⠋⠀⠀⢿⣿⣿⣶⣶⣴⣾⣿⣿⣿⠿⠃⢿⡀⠀⠀⠀⠀⠀⠀⣠⡴⠞⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀",
+	}
+	
+	// Hot pink gradient colors
+	colors := []string{
+		"#8B008B", // Dark magenta
+		"#A020F0", // Purple
+		"#BA55D3", // Medium orchid
+		"#DA70D6", // Orchid
+		"#FF1493", // Deep pink
+		"#FF69B4", // Hot pink
+		"#FF82AB", // Pink
+		"#FFB6C1", // Light pink
+		"#FFC0CB", // Pink
+		"#FFD0E0", // Very light pink
+	}
+	
+	result := ""
+	for i, line := range lines {
+		style := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colors[i])).
+			Bold(true)
+		result += style.Render(line) + "\n"
+	}
+	
+	return result
+}

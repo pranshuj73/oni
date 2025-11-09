@@ -177,12 +177,15 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case UpdateAnimeSelection:
-			// Delegate to anime list
-			if m.animeList != nil {
-				var cmd tea.Cmd
-				_, cmd = m.animeList.Update(msg)
+			// Handle back navigation
+			if msg.String() == "ctrl+c" || msg.String() == "esc" {
+				m.state = UpdateTypeSelection
+				m.animeList = nil
+				return m, nil
+			}
 
-				// Check if anime was selected
+			// Check if user pressed Enter to select
+			if msg.String() == "enter" || msg.String() == "p" {
 				selectedEntry := m.animeList.GetSelectedEntry()
 				if selectedEntry != nil {
 					m.selectedEntry = selectedEntry
@@ -190,7 +193,12 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusCursor = 0
 					return m, nil
 				}
+			}
 
+			// Delegate to anime list for navigation
+			if m.animeList != nil {
+				var cmd tea.Cmd
+				_, cmd = m.animeList.Update(msg)
 				return m, cmd
 			}
 

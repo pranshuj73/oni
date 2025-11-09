@@ -26,18 +26,19 @@ const (
 
 // ConfigEditor represents the config editor model
 type ConfigEditor struct {
-	cfg           *config.Config
-	styles        Styles
-	state         ConfigEditorState
-	cursor        int
-	configItems   []ConfigItem
-	err           error
-	textInput     textinput.Model
-	selectList    list.Model
-	selectOptions []string
-	selectCursor  int
-	help          help.Model
-	universalKeys UniversalKeys
+	cfg                *config.Config
+	styles             Styles
+	state              ConfigEditorState
+	cursor             int
+	configItems        []ConfigItem
+	err                error
+	textInput          textinput.Model
+	selectList         list.Model
+	selectOptions      []string
+	selectCursor       int
+	help               help.Model
+	universalKeys       UniversalKeys
+	prevIncognitoState bool // Track previous incognito state to detect toggle off
 }
 
 // ConfigItem represents a configuration item
@@ -68,6 +69,7 @@ func NewConfigEditor(cfg *config.Config) *ConfigEditor {
 		{"quality", "Quality", cfg.Provider.Quality, ConfigTypeSelect, "Provider", []string{"1080", "720", "480", "360", "240", "best", "worst"}},
 		{"sub_or_dub", "Sub or Dub", cfg.Playback.SubOrDub, ConfigTypeSelect, "Playback", []string{"sub", "dub"}},
 		{"subs_language", "Subtitles Language", cfg.Playback.SubsLanguage, ConfigTypeText, "Playback", nil},
+		{"persist_incognito_sessions", "Persist Incognito Sessions", cfg.Playback.PersistIncognitoSessions, ConfigTypeToggle, "Playback", nil},
 		{"discord_presence", "Discord Presence", cfg.Discord.DiscordPresence, ConfigTypeToggle, "Discord", nil},
 		{"show_adult_content", "Show Adult Content", cfg.Advanced.ShowAdultContent, ConfigTypeToggle, "Advanced", nil},
 	}
@@ -102,6 +104,8 @@ type ConfigSavedMsg struct {
 
 // saveConfig saves the configuration
 func (m *ConfigEditor) saveConfig() tea.Msg {
+	// Note: Incognito mode is now runtime-only (toggled with 'p' key)
+	// We only handle persist_incognito_sessions setting here
 	err := config.Save(m.cfg)
 	return ConfigSavedMsg{Err: err}
 }
@@ -283,6 +287,12 @@ func (m *ConfigEditor) applyConfigChange(name string, value interface{}) {
 		m.cfg.Playback.SubOrDub = fmt.Sprintf("%v", value)
 	case "subs_language":
 		m.cfg.Playback.SubsLanguage = fmt.Sprintf("%v", value)
+	case "persist_incognito_sessions":
+		if boolVal, ok := value.(bool); ok {
+			m.cfg.Playback.PersistIncognitoSessions = boolVal
+		} else if strVal, ok := value.(string); ok {
+			m.cfg.Playback.PersistIncognitoSessions = (strVal == "true")
+		}
 	case "discord_presence":
 		if boolVal, ok := value.(bool); ok {
 			m.cfg.Discord.DiscordPresence = boolVal

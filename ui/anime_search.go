@@ -146,15 +146,21 @@ func (m *AnimeSearch) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.input) > 0 {
 					m.input = m.input[:len(m.input)-1]
 				}
+				return m, nil
 
 			case "enter":
 				if m.input != "" {
 					m.state = SearchLoading
 					return m, m.searchAnime
 				}
+				return m, nil
 
 			default:
-				m.input += msg.String()
+				// Only add printable characters (ignore special keys)
+				if len(msg.Runes) > 0 {
+					m.input += string(msg.Runes)
+				}
+				return m, nil
 			}
 
 		case SearchResults:

@@ -39,8 +39,9 @@ type UIConfig struct {
 
 // PlaybackConfig contains playback-related settings
 type PlaybackConfig struct {
-	SubOrDub     string `ini:"sub_or_dub"`
-	SubsLanguage string `ini:"subs_language"`
+	SubOrDub              string `ini:"sub_or_dub"`
+	SubsLanguage          string `ini:"subs_language"`
+	PersistIncognitoSessions bool `ini:"persist_incognito_sessions"`
 }
 
 // DiscordConfig contains Discord presence settings

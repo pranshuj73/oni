@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/pranshuj73/oni/config"
 )
 
 // HistoryEntry represents a watch history entry
@@ -19,7 +21,22 @@ type HistoryEntry struct {
 
 // LoadHistory loads the watch history
 func LoadHistory() ([]HistoryEntry, error) {
-	historyPath, err := GetHistoryPath()
+	return LoadHistoryWithConfig(nil)
+}
+
+// LoadHistoryWithConfig loads the watch history (incognito or normal)
+func LoadHistoryWithConfig(cfg *config.Config) ([]HistoryEntry, error) {
+	incognito := false
+	if cfg != nil {
+		// Try to extract incognito state from config if available
+		// This is a fallback for compatibility
+	}
+	return LoadHistoryWithIncognito(incognito)
+}
+
+// LoadHistoryWithIncognito loads the watch history (incognito or normal)
+func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
+	historyPath, err := GetHistoryPathWithIncognito(incognito)
 	if err != nil {
 		return nil, err
 	}
@@ -88,13 +105,28 @@ func LoadHistory() ([]HistoryEntry, error) {
 
 // SaveHistoryEntry saves or updates a history entry
 func SaveHistoryEntry(entry HistoryEntry) error {
-	historyPath, err := GetHistoryPath()
+	return SaveHistoryEntryWithConfig(entry, nil)
+}
+
+// SaveHistoryEntryWithConfig saves or updates a history entry (incognito or normal)
+func SaveHistoryEntryWithConfig(entry HistoryEntry, cfg *config.Config) error {
+	incognito := false
+	if cfg != nil {
+		// Try to extract incognito state from config if available
+		// This is a fallback for compatibility
+	}
+	return SaveHistoryEntryWithIncognito(entry, incognito)
+}
+
+// SaveHistoryEntryWithIncognito saves or updates a history entry (incognito or normal)
+func SaveHistoryEntryWithIncognito(entry HistoryEntry, incognito bool) error {
+	historyPath, err := GetHistoryPathWithIncognito(incognito)
 	if err != nil {
 		return err
 	}
 
 	// Load existing history
-	entries, err := LoadHistory()
+	entries, err := LoadHistoryWithIncognito(incognito)
 	if err != nil {
 		return err
 	}
@@ -180,9 +212,14 @@ func DeleteHistoryEntry(mediaID int) error {
 	return nil
 }
 
-// GetHistoryEntry gets a specific history entry
+// GetHistoryEntry gets a specific history entry (defaults to normal history)
 func GetHistoryEntry(mediaID int, episode int) (*HistoryEntry, error) {
-	entries, err := LoadHistory()
+	return GetHistoryEntryWithIncognito(mediaID, episode, false)
+}
+
+// GetHistoryEntryWithIncognito gets a specific history entry (incognito or normal)
+func GetHistoryEntryWithIncognito(mediaID int, episode int, incognito bool) (*HistoryEntry, error) {
+	entries, err := LoadHistoryWithIncognito(incognito)
 	if err != nil {
 		return nil, err
 	}

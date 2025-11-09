@@ -86,3 +86,68 @@ func DefaultStyles() Styles {
 	}
 }
 
+// IncognitoStyles returns styles with hot pink color scheme for incognito mode
+func IncognitoStyles() Styles {
+	return Styles{
+		Title: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FF1493")). // Deep pink
+			Padding(0, 1),
+
+		Subtitle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF69B4")). // Hot pink
+			Padding(0, 1),
+
+		MenuItem: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFB6C1")). // Light pink
+			Padding(0, 2),
+
+		SelectedItem: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FFFFFF")). // White text
+			Background(lipgloss.Color("#FF1493")). // Deep pink
+			Padding(0, 2),
+
+		Info: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF69B4")). // Hot pink
+			Padding(0, 1),
+
+		Error: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#E06C75")). // Soft red
+			Padding(0, 1),
+
+		Success: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#98C379")). // Green
+			Padding(0, 1),
+
+		Prompt: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFB6C1")). // Light pink
+			Padding(0, 1),
+
+		Border: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#FF1493")). // Deep pink
+			Padding(1, 2),
+
+		Help: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFB6C1")). // Light pink
+			Padding(0, 1),
+
+		StatusBar: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).  // White
+			Background(lipgloss.Color("#FF1493")). // Deep pink
+			Padding(0, 1),
+
+		AnimeTitle: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FF69B4")). // Hot pink
+			Padding(0, 1),
+
+		EpisodeInfo: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFB6C1")). // Light pink
+			Padding(0, 1),
+	}
+}
+

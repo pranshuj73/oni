@@ -525,13 +525,15 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
-		// Handle universal keys first
-		switch {
-		case key.Matches(msg, m.universalKeys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-			return m, nil
-		case key.Matches(msg, m.universalKeys.Quit):
-			return m, func() tea.Msg { return BackMsg{} }
+		// Handle universal keys first, but skip in search input state
+		if m.state != ListSearchInput {
+			switch {
+			case key.Matches(msg, m.universalKeys.Help):
+				m.help.ShowAll = !m.help.ShowAll
+				return m, nil
+			case key.Matches(msg, m.universalKeys.Quit):
+				return m, func() tea.Msg { return BackMsg{} }
+			}
 		}
 
 		switch m.state {
@@ -605,27 +607,37 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case ListSearchInput:
+			// Handle universal keys in search input (but only quit, not help)
+			if key.Matches(msg, m.universalKeys.Quit) {
+				return m, func() tea.Msg { return BackMsg{} }
+			}
+			
 			switch msg.String() {
 			case "ctrl+c", "esc":
 				m.state = ListResults
 				m.searchInput = ""
 				m.searchResults = []anilist.Anime{}
+				return m, nil
 
 			case "backspace":
 				if len(m.searchInput) > 0 {
 					m.searchInput = m.searchInput[:len(m.searchInput)-1]
 				}
+				return m, nil
 
 			case "enter":
 				if m.searchInput != "" {
 					m.state = ListSearchLoading
 					return m, m.searchAnime
 				}
+				return m, nil
 
 			default:
-				if len(msg.String()) == 1 {
-					m.searchInput += msg.String()
+				// Only add printable characters (ignore special keys)
+				if len(msg.Runes) > 0 {
+					m.searchInput += string(msg.Runes)
 				}
+				return m, nil
 			}
 
 		case ListSearchResults:
@@ -697,7 +709,10 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case AllListsResultMsg:
-		m.state = ListResults
+		// Only change state if we're not in search mode
+		if m.state != ListSearchInput && m.state != ListSearchLoading && m.state != ListSearchResults {
+			m.state = ListResults
+		}
 		
 		// Update entries with new data
 		if msg.Err == nil {

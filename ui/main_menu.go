@@ -29,6 +29,7 @@ type MainMenu struct {
 	loadingMsg    string
 	spinner       spinner.Model
 	fetchingAnime bool
+	incognitoMode bool // Runtime incognito mode (not persisted)
 }
 
 // mainMenuKeyMap defines the keybindings for the main menu
@@ -37,19 +38,20 @@ type mainMenuKeyMap struct {
 	Down          key.Binding
 	Select        key.Binding
 	SelectEpisode key.Binding
+	Incognito     key.Binding
 	Quit          key.Binding
 }
 
 // ShortHelp returns keybindings to be shown in the mini help view
 func (k mainMenuKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Select, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Select, k.Incognito, k.Quit}
 }
 
 // FullHelp returns keybindings for the full help view
 func (k mainMenuKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Select, k.SelectEpisode},
-		{k.Quit},
+		{k.Incognito, k.Quit},
 	}
 }
 
@@ -71,6 +73,10 @@ func DefaultMainMenuKeyMap() mainMenuKeyMap {
 		SelectEpisode: key.NewBinding(
 			key.WithKeys("s", "shift+enter"),
 			key.WithHelp("s", "select episode"),
+		),
+		Incognito: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "toggle incognito"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),
@@ -149,17 +155,24 @@ func shortenTitle(title string) string {
 // fetchContinueWatchingAnime fetches the anime name for continue watching from local history
 func (m *MainMenu) fetchContinueWatchingAnime() tea.Cmd {
 	return func() tea.Msg {
-		// Use local history only
-		history, err := player.LoadHistory()
+		// Use incognito or normal history based on current mode
+		history, err := player.LoadHistoryWithIncognito(m.incognitoMode)
 		if err == nil && len(history) > 0 {
 			lastEntry := history[len(history)-1]
 			if lastEntry.Title != "" {
 				// Just shorten the stored title by splitting on colon
 				shortTitle := shortenTitle(lastEntry.Title)
 				
+				// Show next episode (progress + 1) in the menu
+				nextEpisode := lastEntry.Progress + 1
+				// Don't exceed total episodes
+				if lastEntry.EpisodesTotal > 0 && nextEpisode > lastEntry.EpisodesTotal {
+					nextEpisode = lastEntry.EpisodesTotal
+				}
+				
 				return ContinueWatchingAnimeMsg{
 					AnimeName: shortTitle,
-					Episode:   lastEntry.Progress,
+					Episode:   nextEpisode,
 				}
 			}
 		}
@@ -176,6 +189,9 @@ func (m *MainMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fetchingAnime = false
 		if msg.AnimeName != "" {
 			m.options[0] = fmt.Sprintf("Continue Watching (%s • Episode %d)", msg.AnimeName, msg.Episode)
+		} else {
+			// No anime found, reset to default
+			m.options[0] = "Continue Watching"
 		}
 		return m, nil
 
@@ -235,6 +251,22 @@ func (m *MainMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return MenuSelectionMsg{Selection: m.selected, ShowEpisodeSelect: true}
 				}
 			}
+
+		case key.Matches(msg, m.keys.Incognito):
+			// Toggle incognito mode
+			m.incognitoMode = !m.incognitoMode
+			// Update styles based on incognito mode
+			if m.incognitoMode {
+				m.styles = IncognitoStyles()
+			} else {
+				m.styles = DefaultStyles()
+			}
+			// If incognito history is preserved, update continue watching immediately
+			if m.cfg.Playback.PersistIncognitoSessions {
+				m.fetchingAnime = true
+				return m, m.fetchContinueWatchingAnime()
+			}
+			return m, nil
 		}
 
 	}
@@ -244,9 +276,18 @@ func (m *MainMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the main menu
 func (m *MainMenu) View() string {
-	// Show colorful banner
-	s := GetBannerGradient() + "\n"
-	s += m.styles.Subtitle.Render("Oni — Anime Streaming Client") + "\n\n"
+	// Show colorful banner (incognito or normal)
+	var banner string
+	var subtitle string
+	if m.incognitoMode {
+		banner = GetBannerGradientIncognito()
+		subtitle = m.styles.Subtitle.Render("Oni — Anime Streaming Client (Private Mode)")
+	} else {
+		banner = GetBannerGradient()
+		subtitle = m.styles.Subtitle.Render("Oni — Anime Streaming Client")
+	}
+	s := banner + "\n"
+	s += subtitle + "\n\n"
 
 	for i, option := range m.options {
 		cursor := " "
@@ -312,5 +353,10 @@ func (m *MainMenu) GetSelected() string {
 // SetLoadingMsg sets the loading message
 func (m *MainMenu) SetLoadingMsg(msg string) {
 	m.loadingMsg = msg
+}
+
+// GetIncognitoMode returns the current incognito mode state
+func (m *MainMenu) GetIncognitoMode() bool {
+	return m.incognitoMode
 }
 
