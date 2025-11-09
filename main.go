@@ -196,6 +196,27 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 
+		// Handle navigation from error state
+		if a.err != nil {
+			switch msg.String() {
+			case "q":
+				return a, tea.Quit
+			case "enter":
+				// Go to Watch Anime menu
+				a.err = nil
+				a.state = StateAnimeList
+				a.currentModel = ui.NewAnimeList(a.cfg, a.client)
+				return a, a.currentModel.Init()
+			case "esc", "backspace", "m":
+				// Go back to main menu
+				a.err = nil
+				a.state = StateMainMenu
+				a.currentModel = a.mainMenu
+				return a, a.currentModel.Init()
+			}
+			return a, nil
+		}
+
 	case ui.MenuSelectionMsg:
 		return a.handleMenuSelection(msg.Selection, msg.ShowEpisodeSelect)
 
@@ -270,8 +291,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (a *App) View() string {
 	if a.err != nil {
-		errorMsg := fmt.Sprintf("Error: %v\n\nPress q to quit", a.err)
-		return errorMsg
+		styles := ui.DefaultStyles()
+		s := ui.GetBannerGradient() + "\n"
+		s += styles.Subtitle.Render("Oni — Anime Streaming Client") + "\n\n"
+		
+		s += styles.Error.Render("⚠ Error") + "\n\n"
+		s += styles.Info.Render(a.err.Error()) + "\n\n"
+		
+		s += styles.Prompt.Render("Options:") + "\n"
+		s += styles.MenuItem.Render("  Enter") + " " + styles.Help.Render("→ Go to Watch Anime menu") + "\n"
+		s += styles.MenuItem.Render("  Esc/Backspace/m") + " " + styles.Help.Render("→ Go back to main menu") + "\n"
+		s += styles.MenuItem.Render("  q") + " " + styles.Help.Render("→ Quit") + "\n"
+		
+		return s
 	}
 
 	view := a.currentModel.View()
@@ -556,7 +588,7 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 	// Return to main menu
 	a.state = StateMainMenu
 	a.currentModel = a.mainMenu
-	return a, nil
+	return a, a.currentModel.Init() // Re-initialize to refresh continue watching anime
 }
 
 func (a *App) continueFromEntry(entry anilist.MediaListEntry, showEpisodeSelect bool) (tea.Model, tea.Cmd) {

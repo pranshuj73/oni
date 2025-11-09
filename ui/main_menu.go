@@ -122,6 +122,7 @@ func (m *MainMenu) SetClient(client *anilist.Client) {
 // ContinueWatchingAnimeMsg is sent when the continue watching anime is fetched
 type ContinueWatchingAnimeMsg struct {
 	AnimeName string
+	Episode   int
 }
 
 // Init initializes the main menu
@@ -132,6 +133,19 @@ func (m *MainMenu) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// shortenTitle shortens an anime title by:
+// 1. Using the part before ":" if it exists
+// 2. Otherwise using the original title
+func shortenTitle(title string) string {
+	if idx := strings.Index(title, ":"); idx > 0 {
+		short := strings.TrimSpace(title[:idx])
+		if len(short) > 0 {
+			return short
+		}
+	}
+	return title
+}
+
 // fetchContinueWatchingAnime fetches the anime name for continue watching from local history
 func (m *MainMenu) fetchContinueWatchingAnime() tea.Cmd {
 	return func() tea.Msg {
@@ -140,12 +154,18 @@ func (m *MainMenu) fetchContinueWatchingAnime() tea.Cmd {
 		if err == nil && len(history) > 0 {
 			lastEntry := history[len(history)-1]
 			if lastEntry.Title != "" {
-				return ContinueWatchingAnimeMsg{AnimeName: lastEntry.Title}
+				// Just shorten the stored title by splitting on colon
+				shortTitle := shortenTitle(lastEntry.Title)
+				
+				return ContinueWatchingAnimeMsg{
+					AnimeName: shortTitle,
+					Episode:   lastEntry.Progress,
+				}
 			}
 		}
 
 		// No anime found
-		return ContinueWatchingAnimeMsg{AnimeName: ""}
+		return ContinueWatchingAnimeMsg{AnimeName: "", Episode: 0}
 	}
 }
 
@@ -155,7 +175,7 @@ func (m *MainMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ContinueWatchingAnimeMsg:
 		m.fetchingAnime = false
 		if msg.AnimeName != "" {
-			m.options[0] = fmt.Sprintf("Continue Watching (%s)", msg.AnimeName)
+			m.options[0] = fmt.Sprintf("Continue Watching (%s • Episode %d)", msg.AnimeName, msg.Episode)
 		}
 		return m, nil
 

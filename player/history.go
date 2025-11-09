@@ -64,12 +64,16 @@ func LoadHistory() ([]HistoryEntry, error) {
 			continue
 		}
 
+		// Title is everything after parts[0], parts[1], and parts[2]
+		// Join all remaining parts in case title contains tabs
+		title := strings.Join(parts[3:], "\t")
+
 		entry := HistoryEntry{
 			MediaID:       mediaID,
 			Progress:      progress,
 			EpisodesTotal: episodesTotal,
 			Timestamp:     parts[2],
-			Title:         parts[3],
+			Title:         title,
 		}
 
 		entries = append(entries, entry)
