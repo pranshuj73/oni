@@ -2,18 +2,22 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/pranshuj73/oni/anilist"
 	"github.com/pranshuj73/oni/config"
+	"github.com/pranshuj73/oni/player"
 )
 
 // MainMenu represents the main menu model
 type MainMenu struct {
 	cfg           *config.Config
+	client        *anilist.Client
 	styles        Styles
 	cursor        int
 	options       []string
@@ -24,6 +28,7 @@ type MainMenu struct {
 	universalKeys UniversalKeys
 	loadingMsg    string
 	spinner       spinner.Model
+	fetchingAnime bool
 }
 
 // mainMenuKeyMap defines the keybindings for the main menu
@@ -76,6 +81,11 @@ func DefaultMainMenuKeyMap() mainMenuKeyMap {
 
 // NewMainMenu creates a new main menu
 func NewMainMenu(cfg *config.Config) *MainMenu {
+	return NewMainMenuWithClient(cfg, nil)
+}
+
+// NewMainMenuWithClient creates a new main menu with an AniList client
+func NewMainMenuWithClient(cfg *config.Config, client *anilist.Client) *MainMenu {
 	options := []string{
 		"Continue Watching",
 		"Watch Anime",
@@ -90,6 +100,7 @@ func NewMainMenu(cfg *config.Config) *MainMenu {
 
 	mm := &MainMenu{
 		cfg:           cfg,
+		client:        client,
 		styles:        DefaultStyles(),
 		cursor:        0,
 		options:       options,
@@ -103,14 +114,51 @@ func NewMainMenu(cfg *config.Config) *MainMenu {
 	return mm
 }
 
+// SetClient sets the AniList client and fetches continue watching anime
+func (m *MainMenu) SetClient(client *anilist.Client) {
+	m.client = client
+}
+
+// ContinueWatchingAnimeMsg is sent when the continue watching anime is fetched
+type ContinueWatchingAnimeMsg struct {
+	AnimeName string
+}
+
 // Init initializes the main menu
 func (m *MainMenu) Init() tea.Cmd {
-	return m.spinner.Tick
+	cmds := []tea.Cmd{m.spinner.Tick}
+	m.fetchingAnime = true
+	cmds = append(cmds, m.fetchContinueWatchingAnime())
+	return tea.Batch(cmds...)
+}
+
+// fetchContinueWatchingAnime fetches the anime name for continue watching from local history
+func (m *MainMenu) fetchContinueWatchingAnime() tea.Cmd {
+	return func() tea.Msg {
+		// Use local history only
+		history, err := player.LoadHistory()
+		if err == nil && len(history) > 0 {
+			lastEntry := history[len(history)-1]
+			if lastEntry.Title != "" {
+				return ContinueWatchingAnimeMsg{AnimeName: lastEntry.Title}
+			}
+		}
+
+		// No anime found
+		return ContinueWatchingAnimeMsg{AnimeName: ""}
+	}
 }
 
 // Update handles messages
 func (m *MainMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case ContinueWatchingAnimeMsg:
+		m.fetchingAnime = false
+		if msg.AnimeName != "" {
+			m.options[0] = fmt.Sprintf("Continue Watching (%s)", msg.AnimeName)
+		}
+		return m, nil
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -145,7 +193,13 @@ func (m *MainMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, m.keys.Select):
-			m.selected = m.options[m.cursor]
+			// Extract base selection name (remove anime name if present)
+			selected := m.options[m.cursor]
+			if strings.HasPrefix(selected, "Continue Watching") {
+				m.selected = "Continue Watching"
+			} else {
+				m.selected = selected
+			}
 			if m.selected == "Quit" {
 				return m, tea.Quit
 			}
@@ -155,8 +209,8 @@ func (m *MainMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		case key.Matches(msg, m.keys.SelectEpisode):
 			// If on "Continue Watching", 's' key or Shift+Enter opens episode selection
-			if m.options[m.cursor] == "Continue Watching" {
-				m.selected = m.options[m.cursor]
+			if strings.HasPrefix(m.options[m.cursor], "Continue Watching") {
+				m.selected = "Continue Watching"
 				return m, func() tea.Msg {
 					return MenuSelectionMsg{Selection: m.selected, ShowEpisodeSelect: true}
 				}
@@ -196,7 +250,7 @@ func (m *MainMenu) View() string {
 		var viewKeys []key.Binding
 		var viewFull [][]key.Binding
 		
-		if m.cursor < len(m.options) && m.options[m.cursor] == "Continue Watching" {
+		if m.cursor < len(m.options) && strings.HasPrefix(m.options[m.cursor], "Continue Watching") {
 			// Show help with select episode option
 			viewKeys = []key.Binding{m.keys.Up, m.keys.Down, 
 				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "auto-play")),

@@ -142,7 +142,7 @@ func main() {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 
 	// Create and run the app
-	mainMenu := ui.NewMainMenu(cfg)
+	mainMenu := ui.NewMainMenuWithClient(cfg, client)
 	initialState := StateMainMenu
 	var initialModel tea.Model = mainMenu
 	
@@ -219,7 +219,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.err = msg.Err
 			a.state = StateMainMenu
 			a.currentModel = a.mainMenu
-			return a, nil
+			return a, a.currentModel.Init() // Re-initialize to refresh continue watching anime
 		}
 		if msg.Entry != nil {
 			return a.continueFromEntry(*msg.Entry, msg.ShowEpisodeSelect)
@@ -245,15 +245,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Return to main menu
 			a.state = StateMainMenu
 			a.currentModel = a.mainMenu
-			return a, nil
+			return a, a.currentModel.Init() // Re-initialize to refresh continue watching anime
 		}
 	
 	case ui.AniListAuthSuccessMsg:
 		// Authentication successful, store client and go to main menu
 		a.client = msg.Client
+		a.mainMenu.SetClient(msg.Client)
 		a.state = StateMainMenu
 		a.currentModel = a.mainMenu
-		return a, nil
+		return a, a.currentModel.Init() // Re-initialize to fetch continue watching anime
 
 	case tea.WindowSizeMsg:
 		// Store window size and pass to current model
@@ -325,24 +326,10 @@ type ContinueWatchingResultMsg struct {
 	Err              error
 }
 
-// fetchContinueWatching fetches the anime to continue watching
+// fetchContinueWatching fetches the anime to continue watching from local history
 func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 	return func() tea.Msg {
-		// Try AniList first (CURRENT or REPEATING)
-		if !a.cfg.AniList.NoAniList && a.client != nil {
-			for _, status := range []string{"CURRENT", "REPEATING"} {
-				entries, err := a.client.GetAnimeList(context.Background(), status)
-				if err == nil && len(entries) > 0 {
-					entry := entries[len(entries)-1]
-					return ContinueWatchingResultMsg{
-						Entry:            &entry,
-						ShowEpisodeSelect: showEpisodeSelect,
-					}
-				}
-			}
-		}
-
-		// Fallback to local history
+		// Use local history only
 		history, err := player.LoadHistory()
 		if err != nil || len(history) == 0 {
 			return ContinueWatchingResultMsg{
@@ -351,19 +338,29 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 		}
 
 		lastEntry := history[len(history)-1]
-		if a.cfg.AniList.NoAniList || a.client == nil {
-			return ContinueWatchingResultMsg{
-				Err: fmt.Errorf("AniList is required for continue watching"),
+		
+		// If AniList is available, fetch full anime info
+		if !a.cfg.AniList.NoAniList && a.client != nil {
+			animeInfo, err := a.client.GetAnimeInfo(context.Background(), lastEntry.MediaID)
+			if err == nil {
+				entry := anilist.MediaListEntry{
+					Media:    *animeInfo,
+					Progress: lastEntry.Progress,
+				}
+				return ContinueWatchingResultMsg{
+					Entry:            &entry,
+					ShowEpisodeSelect: showEpisodeSelect,
+				}
 			}
 		}
 
-		animeInfo, err := a.client.GetAnimeInfo(context.Background(), lastEntry.MediaID)
-		if err != nil {
-			return ContinueWatchingResultMsg{Err: err}
-		}
-
+		// If AniList not available or fetch failed, create a minimal entry from history
+		// This will require searching by title when playing
 		entry := anilist.MediaListEntry{
-			Media:    *animeInfo,
+			Media: anilist.Anime{
+				ID:    lastEntry.MediaID,
+				Title: anilist.Title{English: lastEntry.Title},
+			},
 			Progress: lastEntry.Progress,
 		}
 		return ContinueWatchingResultMsg{
@@ -491,39 +488,37 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 		return a, nil
 	}
 
-	// Update history and progress
-	if playbackInfo.CompletedSuccessful && !a.cfg.AniList.NoAniList {
-		// Update AniList progress
+	// Always save to local history (independent of AniList)
+	episodesTotal := 9999
+	if a.selectedAnime.Episodes != nil {
+		episodesTotal = *a.selectedAnime.Episodes
+	}
+
+	entry := player.HistoryEntry{
+		MediaID:       a.selectedAnime.ID,
+		Progress:      a.selectedEp,
+		EpisodesTotal: episodesTotal,
+		Timestamp:     playbackInfo.StoppedAt,
+		Title:         a.selectedAnime.Title.UserPreferred,
+	}
+
+	if err := player.SaveHistoryEntry(entry); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to save history: %v\n", err)
+	}
+
+	// Update AniList progress separately (if enabled and episode completed)
+	if playbackInfo.CompletedSuccessful && !a.cfg.AniList.NoAniList && a.client != nil {
 		status := "CURRENT"
 		if a.selectedAnime.Episodes != nil && a.selectedEp >= *a.selectedAnime.Episodes {
 			status = "COMPLETED"
 		}
 
-		err = a.client.UpdateProgress(context.Background(), a.selectedAnime.ID, a.selectedEp, status)
+		err := a.client.UpdateProgress(context.Background(), a.selectedAnime.ID, a.selectedEp, status)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to update progress: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: Failed to update AniList progress: %v\n", err)
 		}
-
-		// Delete from local history if completed
-		if status == "COMPLETED" {
-			player.DeleteHistoryEntry(a.selectedAnime.ID)
-		}
-	} else {
-		// Save to local history
-		episodesTotal := 9999
-		if a.selectedAnime.Episodes != nil {
-			episodesTotal = *a.selectedAnime.Episodes
-		}
-
-		entry := player.HistoryEntry{
-			MediaID:       a.selectedAnime.ID,
-			Progress:      a.selectedEp,
-			EpisodesTotal: episodesTotal,
-			Timestamp:     playbackInfo.StoppedAt,
-			Title:         a.selectedAnime.Title.UserPreferred,
-		}
-
-		player.SaveHistoryEntry(entry)
+		// Note: We don't delete from local history even if AniList marks it as completed
+		// Local history is independent and preserved at all times
 	}
 
 	// Check if episode was completed successfully
@@ -635,7 +630,7 @@ func (a *App) playNextEpisode() (tea.Model, tea.Cmd) {
 		a.autoplayMode = false
 		a.state = StateMainMenu
 		a.currentModel = a.mainMenu
-		return a, nil
+		return a, a.currentModel.Init() // Re-initialize to refresh continue watching anime
 	}
 
 	// Fetch and play next episode
@@ -649,7 +644,7 @@ func (a *App) handleBack() (tea.Model, tea.Cmd) {
 	a.selectedAnime = nil
 	a.selectedEntry = nil
 	a.err = nil
-	return a, nil
+	return a, a.currentModel.Init() // Re-initialize to refresh continue watching anime
 }
 
 func showUsage() {
