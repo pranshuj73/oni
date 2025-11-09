@@ -16,6 +16,7 @@ type HistoryEntry struct {
 	Progress      int
 	EpisodesTotal int
 	Timestamp     string // Resume timestamp (where you stopped watching)
+	Duration      string // Total duration of the episode (HH:MM:SS format)
 	LastWatched   string // Last watched timestamp (when you last completed an episode)
 	Title         string
 }
@@ -85,17 +86,28 @@ func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
 		// Parse timestamp (resume point)
 		timestamp := parts[2]
 		
-		// Parse LastWatched and Title
-		// Format: MediaID\tProgress/EpisodesTotal\tTimestamp\tLastWatched\tTitle
-		// For backward compatibility: if only 4 parts, LastWatched is missing
+		// Parse Duration, LastWatched and Title
+		// Format: MediaID\tProgress/EpisodesTotal\tTimestamp\tDuration\tLastWatched\tTitle
+		// For backward compatibility:
+		// - Old format (4 parts): MediaID\tProgress/EpisodesTotal\tTimestamp\tTitle
+		// - Old format (5 parts): MediaID\tProgress/EpisodesTotal\tTimestamp\tLastWatched\tTitle
+		// - New format (6+ parts): MediaID\tProgress/EpisodesTotal\tTimestamp\tDuration\tLastWatched\tTitle
+		var duration string
 		var lastWatched string
 		var title string
-		if len(parts) >= 5 {
-			// New format with LastWatched
+		if len(parts) >= 6 {
+			// New format with Duration
+			duration = parts[3]
+			lastWatched = parts[4]
+			title = strings.Join(parts[5:], "\t")
+		} else if len(parts) >= 5 {
+			// Old format with LastWatched but no Duration
+			duration = "" // No duration stored
 			lastWatched = parts[3]
 			title = strings.Join(parts[4:], "\t")
 		} else {
-			// Old format without LastWatched - use Timestamp as fallback
+			// Oldest format without LastWatched or Duration
+			duration = "" // No duration stored
 			lastWatched = parts[2]
 			title = strings.Join(parts[3:], "\t")
 		}
@@ -105,6 +117,7 @@ func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
 			Progress:      progress,
 			EpisodesTotal: episodesTotal,
 			Timestamp:     timestamp,
+			Duration:      duration,
 			LastWatched:   lastWatched,
 			Title:         title,
 		}
@@ -169,12 +182,13 @@ func SaveHistoryEntryWithIncognito(entry HistoryEntry, incognito bool) error {
 	defer file.Close()
 
 	for _, e := range entries {
-		// Format: MediaID\tProgress/EpisodesTotal\tTimestamp\tLastWatched\tTitle
-		line := fmt.Sprintf("%d\t%d/%d\t%s\t%s\t%s\n",
+		// Format: MediaID\tProgress/EpisodesTotal\tTimestamp\tDuration\tLastWatched\tTitle
+		line := fmt.Sprintf("%d\t%d/%d\t%s\t%s\t%s\t%s\n",
 			e.MediaID,
 			e.Progress,
 			e.EpisodesTotal,
 			e.Timestamp,
+			e.Duration,
 			e.LastWatched,
 			e.Title,
 		)

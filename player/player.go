@@ -22,6 +22,7 @@ type Player interface {
 // PlaybackInfo contains information about a playback session
 type PlaybackInfo struct {
 	StoppedAt           string
+	TotalDuration       string // Total duration of the episode (HH:MM:SS format)
 	PercentageProgress  int
 	CompletedSuccessful bool
 }

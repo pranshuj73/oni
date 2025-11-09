@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -378,7 +379,35 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 			}
 		}
 
-		lastEntry := history[len(history)-1]
+		// Find the entry with the most recent LastWatched timestamp (same logic as main_menu.go)
+		var lastEntry *player.HistoryEntry
+		var latestTime time.Time
+		
+		for i := range history {
+			entry := &history[i]
+			if entry.Title == "" {
+				continue
+			}
+			
+			// Parse LastWatched timestamp (RFC3339 format)
+			watchedTime, err := time.Parse(time.RFC3339, entry.LastWatched)
+			if err != nil {
+				// If LastWatched is missing or invalid (old format), skip this entry
+				continue
+			}
+			
+			// Check if this is the most recent
+			if lastEntry == nil || watchedTime.After(latestTime) {
+				lastEntry = entry
+				latestTime = watchedTime
+			}
+		}
+		
+		if lastEntry == nil {
+			return ContinueWatchingResultMsg{
+				Err: fmt.Errorf("no anime found to continue watching"),
+			}
+		}
 		
 		// If AniList is available, fetch full anime info
 		if !a.cfg.AniList.NoAniList && a.client != nil {
@@ -513,11 +542,51 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 		return a, nil
 	}
 
-	// Check for resume point (only if episode was completed before)
+	// Check for resume point (only if episode was not already completed)
 	resumeFrom := "00:00:00"
 	historyEntry, _ := player.GetHistoryEntryWithIncognito(a.selectedAnime.ID, a.selectedEp, a.incognitoMode)
-	if historyEntry != nil {
-		resumeFrom = historyEntry.Timestamp
+	if historyEntry != nil && historyEntry.Timestamp != "" && historyEntry.Timestamp != "00:00:00" {
+		// We need the actual duration to calculate time remaining
+		// If duration is not available, start from beginning
+		if historyEntry.Duration == "" {
+			resumeFrom = "00:00:00"
+		} else {
+			// Parse timestamp to check if it's near the end
+			// Format: HH:MM:SS
+			parts := strings.Split(historyEntry.Timestamp, ":")
+			if len(parts) == 3 {
+				hours, _ := strconv.Atoi(parts[0])
+				minutes, _ := strconv.Atoi(parts[1])
+				seconds, _ := strconv.Atoi(parts[2])
+				currentSeconds := hours*3600 + minutes*60 + seconds
+				
+				// Parse duration from history entry (HH:MM:SS format)
+				durationParts := strings.Split(historyEntry.Duration, ":")
+				if len(durationParts) == 3 {
+					durHours, _ := strconv.Atoi(durationParts[0])
+					durMinutes, _ := strconv.Atoi(durationParts[1])
+					durSeconds, _ := strconv.Atoi(durationParts[2])
+					totalDurationSeconds := durHours*3600 + durMinutes*60 + durSeconds
+					
+					timeRemaining := totalDurationSeconds - currentSeconds
+					
+					// If less than 1 minute remaining, start from beginning to avoid immediate completion
+					if timeRemaining < 60 && currentSeconds > 0 {
+						resumeFrom = "00:00:00"
+					} else if currentSeconds > 30 {
+						// Resume from the saved timestamp if it's reasonable
+						resumeFrom = historyEntry.Timestamp
+					}
+					// If currentSeconds <= 30, start from beginning (too early to resume)
+				} else {
+					// Invalid duration format, start from beginning
+					resumeFrom = "00:00:00"
+				}
+			} else {
+				// Invalid timestamp format, start from beginning
+				resumeFrom = "00:00:00"
+			}
+		}
 	}
 
 	// Play video
@@ -539,11 +608,18 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 	// Set LastWatched to current time so "Continue Watching" immediately points to this episode
 	startLastWatched := time.Now().Format(time.RFC3339)
 
+	// Use duration from previous history entry if available, otherwise empty (will be set on completion)
+	startDuration := ""
+	if historyEntry != nil && historyEntry.Duration != "" {
+		startDuration = historyEntry.Duration
+	}
+
 	startEntry := player.HistoryEntry{
 		MediaID:       a.selectedAnime.ID,
 		Progress:      a.selectedEp,
 		EpisodesTotal: episodesTotal,
 		Timestamp:     resumeFrom,
+		Duration:      startDuration,
 		LastWatched:   startLastWatched,
 		Title:         a.selectedAnime.Title.UserPreferred,
 	}
@@ -563,6 +639,7 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 			Progress:      a.selectedEp,
 			EpisodesTotal: episodesTotal,
 			Timestamp:     playbackInfo.StoppedAt,
+			Duration:      playbackInfo.TotalDuration,
 			LastWatched:   lastWatched,
 			Title:         a.selectedAnime.Title.UserPreferred,
 		}

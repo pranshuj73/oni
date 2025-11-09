@@ -247,7 +247,11 @@ func loadCacheFromDisk() {
 		return
 	}
 	cacheInitialized = true
+	reloadCacheFromDisk()
+}
 
+// reloadCacheFromDisk forces a reload of the cache from disk
+func reloadCacheFromDisk() {
 	cachePath, err := getCachePath()
 	if err != nil {
 		return
@@ -256,12 +260,14 @@ func loadCacheFromDisk() {
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
 		// No cache file exists, will load from API
+		cacheValid = false
 		return
 	}
 
 	var cacheData CacheData
 	if err := json.Unmarshal(data, &cacheData); err != nil {
 		// Invalid cache, will load from API
+		cacheValid = false
 		return
 	}
 
@@ -410,6 +416,8 @@ func NewAnimeList(cfg *config.Config, client *anilist.Client) *AnimeList {
 	al.help.ShowAll = false
 
 		// Load from cache if available
+		// Always reload cache from disk to get the latest data when creating new instance
+		reloadCacheFromDisk()
 		if cacheValid && len(animeListCache) > 0 {
 			// Deep copy the cache to avoid reference issues
 			al.entries = make(map[string][]anilist.MediaListEntry)
