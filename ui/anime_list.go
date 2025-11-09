@@ -99,6 +99,8 @@ type AnimeList struct {
 	searchInput   string
 	searchResults []anilist.Anime
 	searchList    list.Model
+	// Cache tracking
+	lastCacheTimestamp time.Time // Track when we last loaded from cache
 }
 
 // animeListKeyMap defines the keybindings for the anime list
@@ -407,19 +409,20 @@ func NewAnimeList(cfg *config.Config, client *anilist.Client) *AnimeList {
 	// Start with short help by default
 	al.help.ShowAll = false
 
-	// Load from cache if available
-	if cacheValid && len(animeListCache) > 0 {
-		// Deep copy the cache to avoid reference issues
-		al.entries = make(map[string][]anilist.MediaListEntry)
-		for status, entries := range animeListCache {
-			al.entries[status] = make([]anilist.MediaListEntry, len(entries))
-			copy(al.entries[status], entries)
+		// Load from cache if available
+		if cacheValid && len(animeListCache) > 0 {
+			// Deep copy the cache to avoid reference issues
+			al.entries = make(map[string][]anilist.MediaListEntry)
+			for status, entries := range animeListCache {
+				al.entries[status] = make([]anilist.MediaListEntry, len(entries))
+				copy(al.entries[status], entries)
+			}
+			al.state = ListResults
+			al.cacheLoaded = true
+			al.lastCacheTimestamp = cacheTimestamp // Track when we loaded
+			// Initialize lists from cache
+			al.updateListsForAllStatuses()
 		}
-		al.state = ListResults
-		al.cacheLoaded = true
-		// Initialize lists from cache
-		al.updateListsForAllStatuses()
-	}
 
 	return al
 }
@@ -587,6 +590,20 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case spinner.TickMsg:
 		m.spinner, cmd = m.spinner.Update(msg)
+		// Check if cache has been updated since we last loaded
+		if cacheValid && !cacheTimestamp.IsZero() && !m.lastCacheTimestamp.IsZero() {
+			if cacheTimestamp.After(m.lastCacheTimestamp) {
+				// Cache has been updated, reload from it
+				m.entries = make(map[string][]anilist.MediaListEntry)
+				for status, entries := range animeListCache {
+					m.entries[status] = make([]anilist.MediaListEntry, len(entries))
+					copy(m.entries[status], entries)
+				}
+				m.lastCacheTimestamp = cacheTimestamp
+				// Rebuild all lists with new data
+				m.updateListsForAllStatuses()
+			}
+		}
 		return m, cmd
 
 	case tea.KeyMsg:
@@ -783,6 +800,7 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil {
 			m.entries = msg.AllEntries
 			m.err = nil
+			m.lastCacheTimestamp = cacheTimestamp // Update our cache timestamp tracking
 			// Rebuild all lists with new data
 			m.updateListsForAllStatuses()
 		} else {

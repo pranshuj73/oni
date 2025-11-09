@@ -530,17 +530,35 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 		return a, nil
 	}
 
-	// Only save to local history if episode was completed successfully
-	if playbackInfo.CompletedSuccessful {
-		episodesTotal := 9999
-		if a.selectedAnime.Episodes != nil {
-			episodesTotal = *a.selectedAnime.Episodes
-		}
+	// Save history entry when episode starts
+	episodesTotal := 9999
+	if a.selectedAnime.Episodes != nil {
+		episodesTotal = *a.selectedAnime.Episodes
+	}
 
+	// Set LastWatched to current time so "Continue Watching" immediately points to this episode
+	startLastWatched := time.Now().Format(time.RFC3339)
+
+	startEntry := player.HistoryEntry{
+		MediaID:       a.selectedAnime.ID,
+		Progress:      a.selectedEp,
+		EpisodesTotal: episodesTotal,
+		Timestamp:     resumeFrom,
+		LastWatched:   startLastWatched,
+		Title:         a.selectedAnime.Title.UserPreferred,
+	}
+
+	// Save to incognito or normal history based on current mode
+	if err := player.SaveHistoryEntryWithIncognito(startEntry, a.incognitoMode); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to save history on start: %v\n", err)
+	}
+
+	// Update history entry when episode completes successfully
+	if playbackInfo.CompletedSuccessful {
 		// Get current timestamp for LastWatched
 		lastWatched := time.Now().Format(time.RFC3339)
 
-		entry := player.HistoryEntry{
+		completeEntry := player.HistoryEntry{
 			MediaID:       a.selectedAnime.ID,
 			Progress:      a.selectedEp,
 			EpisodesTotal: episodesTotal,
@@ -549,9 +567,9 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 			Title:         a.selectedAnime.Title.UserPreferred,
 		}
 
-		// Save to incognito or normal history based on current mode
-		if err := player.SaveHistoryEntryWithIncognito(entry, a.incognitoMode); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to save history: %v\n", err)
+		// Update history entry with completion info
+		if err := player.SaveHistoryEntryWithIncognito(completeEntry, a.incognitoMode); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save history on completion: %v\n", err)
 		}
 	}
 

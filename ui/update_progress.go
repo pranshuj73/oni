@@ -262,8 +262,9 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.successMsg = msg.Message
 			m.err = nil
 			// Trigger background cache refresh after successful update
+			// Use ForceRefreshCacheInBackground to bypass 5-minute check
 			if m.client != nil && !m.cfg.AniList.NoAniList {
-				RefreshCacheInBackground(m.cfg, m.client)
+				ForceRefreshCacheInBackground(m.cfg, m.client)
 			}
 		} else {
 			m.err = msg.Err
