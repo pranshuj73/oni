@@ -703,7 +703,7 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			
 			switch msg.String() {
-			case "ctrl+c", "esc":
+			case "ctrl+c", "esc", "q":
 				m.state = ListResults
 				m.searchInput = ""
 				m.searchResults = []anilist.Anime{}
@@ -732,7 +732,7 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case ListSearchResults:
 			switch msg.String() {
-			case "ctrl+c", "esc":
+				case "ctrl+c", "esc", "q", "backspace":
 				m.state = ListResults
 				m.searchInput = ""
 				m.searchResults = []anilist.Anime{}

@@ -128,7 +128,7 @@ func (m *ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.state {
 		case ConfigMenuSelection:
 			switch msg.String() {
-			case "esc":
+			case "esc", "q", "backspace":
 				return m, func() tea.Msg { return BackMsg{} }
 
 			case "up", "k":
@@ -178,7 +178,7 @@ func (m *ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case ConfigTextEdit:
 			switch msg.String() {
-			case "esc":
+			case "esc", "q", "backspace":
 				m.state = ConfigMenuSelection
 				m.textInput.Blur()
 
@@ -197,7 +197,7 @@ func (m *ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case ConfigSelectEdit:
 			switch msg.String() {
-			case "esc":
+			case "esc", "q", "backspace":
 				m.state = ConfigMenuSelection
 
 			case "up", "k":

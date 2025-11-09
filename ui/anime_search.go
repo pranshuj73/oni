@@ -139,10 +139,14 @@ func (m *AnimeSearch) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.state {
 		case SearchInput:
 			switch msg.String() {
-			case "ctrl+c", "esc":
+			case "ctrl+c", "esc", "q":
 				return m, func() tea.Msg { return BackMsg{} }
 
 			case "backspace":
+				// Check if we should go back or delete character
+				if len(m.input) == 0 {
+					return m, func() tea.Msg { return BackMsg{} }
+				}
 				if len(m.input) > 0 {
 					m.input = m.input[:len(m.input)-1]
 				}
@@ -165,7 +169,7 @@ func (m *AnimeSearch) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case SearchResults:
 			switch msg.String() {
-			case "ctrl+c", "esc":
+			case "ctrl+c", "esc", "q", "backspace":
 				return m, func() tea.Msg { return BackMsg{} }
 
 			case "up", "k":
@@ -199,10 +203,6 @@ func (m *AnimeSearch) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
-			case "backspace":
-				m.state = SearchInput
-				m.cursor = 0
-				m.results = []anilist.Anime{}
 			}
 		}
 

@@ -235,7 +235,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.EpisodeReadyMsg:
 		a.selectedEp = msg.Episode
 		a.subOrDub = msg.SubOrDub
-		a.loadingMsg = "Fetching episode info..."
+		a.loadingMsg = "Fetching Episode Info"
 		return a, a.fetchAndPlayEpisode()
 
 	case ui.BackMsg:
@@ -259,8 +259,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.loadingMsg = ""
 			return a, nil
 		}
-		// Video links fetched, now preparing to play
-		a.loadingMsg = "Preparing video player..."
+		// Video links fetched, now loading episode
+		a.loadingMsg = "Loading Episode"
+		// Trigger play in next update cycle so UI can render "Loading Episode"
+		return a, func() tea.Msg {
+			return PlayVideoMsg{VideoData: msg.VideoData}
+		}
+
+	case PlayVideoMsg:
+		// Now actually play the video (UI has rendered "Loading Episode")
 		return a.handlePlayEpisode(msg.VideoData)
 	
 	case ui.AutoplayPromptMsg:
@@ -323,8 +330,9 @@ func (a *App) View() string {
 			lines = lines[:len(lines)-1]
 			view = strings.Join(lines, "\n")
 		}
-		// Add loading message
-		view += "\n" + a.spinner.View() + " " + a.loadingMsg
+		// Add loading message in green
+		styles := ui.DefaultStyles()
+		view += "\n" + a.spinner.View() + " " + styles.Success.Render(a.loadingMsg)
 	}
 
 	return view
@@ -511,7 +519,7 @@ func (a *App) handleAnimeSelected(showEpisodeSelect bool) (tea.Model, tea.Cmd) {
 		}
 		
 		// Try to auto-play the next episode
-		a.loadingMsg = "Fetching episode info..."
+		a.loadingMsg = "Fetching Episode Info"
 		return a, a.fetchAndPlayEpisode()
 	}
 
@@ -525,6 +533,11 @@ func (a *App) handleAnimeSelected(showEpisodeSelect bool) (tea.Model, tea.Cmd) {
 type PlayEpisodeResultMsg struct {
 	VideoData *providers.VideoData
 	Err       error
+}
+
+// PlayVideoMsg is sent to trigger actual video playback (after UI renders "Loading Episode")
+type PlayVideoMsg struct {
+	VideoData *providers.VideoData
 }
 
 // fetchAndPlayEpisode fetches episode info and video links, then plays
@@ -634,7 +647,7 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 	}
 
 	// Play video
-	a.loadingMsg = "Starting video player..."
+	a.loadingMsg = "Playing Episode"
 	title := fmt.Sprintf("%s - Episode %d", a.selectedAnime.Title.UserPreferred, a.selectedEp)
 	playbackInfo, err := plyr.Play(context.Background(), videoData, title, resumeFrom)
 	a.loadingMsg = "" // Clear loading after play starts
@@ -780,7 +793,7 @@ func (a *App) continueFromEntry(entry anilist.MediaListEntry, episode int, showE
 		return a, a.currentModel.Init()
 	}
 
-	a.loadingMsg = "Fetching episode info..."
+	a.loadingMsg = "Fetching Episode Info"
 	return a, a.fetchAndPlayEpisode()
 }
 
