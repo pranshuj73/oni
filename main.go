@@ -725,7 +725,7 @@ Options:
   -h             Show this help
   -q <quality>   Video quality (e.g., 1080, 720)
   -v             Show version
-  -w <provider>  Provider (allanime, aniwatch, yugen, hdrezka, aniworld, crunchyroll)
+  -w <provider>  Provider (allanime, aniwatch, yugen, hdrezka, aniworld)
   --sub-or-dub   Audio type (sub, dub)
 
 Examples:

@@ -65,7 +65,7 @@ func NewConfigEditor(cfg *config.Config) *ConfigEditor {
 	items := []ConfigItem{
 		{"player", "Player", cfg.Player.Player, ConfigTypeText, "Player", nil},
 		{"player_arguments", "Player Arguments", cfg.Player.PlayerArguments, ConfigTypeText, "Player", nil},
-		{"provider", "Provider", cfg.Provider.Provider, ConfigTypeSelect, "Provider", []string{"allanime", "aniwatch", "yugen", "hdrezka", "aniworld", "crunchyroll"}},
+		{"provider", "Provider", cfg.Provider.Provider, ConfigTypeSelect, "Provider", []string{"allanime", "aniwatch", "yugen", "hdrezka", "aniworld"}},
 		{"quality", "Quality", cfg.Provider.Quality, ConfigTypeSelect, "Provider", []string{"1080", "720", "480", "360", "240", "best", "worst"}},
 		{"sub_or_dub", "Sub or Dub", cfg.Playback.SubOrDub, ConfigTypeSelect, "Playback", []string{"sub", "dub"}},
 		{"subs_language", "Subtitles Language", cfg.Playback.SubsLanguage, ConfigTypeText, "Playback", nil},

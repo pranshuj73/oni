@@ -45,8 +45,6 @@ func GetProvider(name string) (Provider, error) {
 		return NewHDRezkaProvider(), nil
 	case "aniworld":
 		return NewAniWorldProvider(), nil
-	case "crunchyroll":
-		return NewCrunchyrollProvider(), nil
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}
