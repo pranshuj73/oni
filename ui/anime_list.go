@@ -218,6 +218,7 @@ func DefaultAnimeListKeyMap() animeListKeyMap {
 var animeListCache = make(map[string][]anilist.MediaListEntry)
 var cacheValid = false
 var cacheInitialized = false
+var cacheTimestamp time.Time
 
 // CacheData represents the cache file structure
 type CacheData struct {
@@ -264,6 +265,7 @@ func loadCacheFromDisk() {
 
 	// Load cache regardless of age - show stale data immediately!
 	animeListCache = cacheData.Entries
+	cacheTimestamp = cacheData.Timestamp
 	cacheValid = true
 }
 
@@ -274,9 +276,11 @@ func saveCacheToDisk() {
 		return
 	}
 
+	now := time.Now()
+	cacheTimestamp = now
 	cacheData := CacheData{
 		Entries:   animeListCache,
-		Timestamp: time.Now(),
+		Timestamp: now,
 	}
 
 	data, err := json.Marshal(cacheData)
@@ -423,7 +427,16 @@ func NewAnimeList(cfg *config.Config, client *anilist.Client) *AnimeList {
 // Init initializes the anime list
 func (m *AnimeList) Init() tea.Cmd {
 	if m.cacheLoaded {
-		// Cache exists! Show immediately and refresh in background
+		// Cache exists! Show immediately and refresh in background if needed
+		// Check if cache is recent (less than 5 minutes old)
+		if !cacheTimestamp.IsZero() {
+			timeSinceUpdate := time.Since(cacheTimestamp)
+			if timeSinceUpdate < 5*time.Minute {
+				// Cache is fresh, skip refresh
+				return tea.Batch(m.spinner.Tick)
+			}
+		}
+		// Cache is stale or timestamp unknown, refresh in background
 		m.isRefreshing = true
 		return tea.Batch(m.spinner.Tick, m.fetchAllListsAsync)
 	}
@@ -483,6 +496,58 @@ func (m *AnimeList) fetchAllListsAsync() tea.Msg {
 	saveCacheToDisk()
 	
 	return AllListsResultMsg{AllEntries: allEntries, Err: nil, IsRefresh: true}
+}
+
+// RefreshCacheInBackground refreshes the anime list cache in the background
+// This can be called on app startup to pre-warm the cache
+// It skips refresh if cache was updated less than 5 minutes ago to prevent rate limits
+func RefreshCacheInBackground(cfg *config.Config, client *anilist.Client) {
+	if client == nil || cfg.AniList.NoAniList {
+		return
+	}
+	
+	// Load cache from disk first
+	loadCacheFromDisk()
+	
+	// Check if cache is recent (less than 5 minutes old)
+	if cacheValid && !cacheTimestamp.IsZero() {
+		timeSinceUpdate := time.Since(cacheTimestamp)
+		if timeSinceUpdate < 5*time.Minute {
+			// Cache is fresh, skip refresh
+			return
+		}
+	}
+	
+	// Start background refresh
+	ForceRefreshCacheInBackground(cfg, client)
+}
+
+// ForceRefreshCacheInBackground forces a cache refresh in the background
+// This bypasses the 5-minute freshness check and is used when updates are made
+func ForceRefreshCacheInBackground(cfg *config.Config, client *anilist.Client) {
+	if client == nil || cfg.AniList.NoAniList {
+		return
+	}
+	
+	// Start background refresh
+	go func() {
+		statuses := []string{"CURRENT", "PLANNING", "COMPLETED", "DROPPED", "PAUSED", "REPEATING"}
+		allEntries := make(map[string][]anilist.MediaListEntry)
+		
+		for _, status := range statuses {
+			entries, err := client.GetAnimeList(context.Background(), status)
+			if err != nil {
+				// Silently fail for background refresh, keep existing cache
+				return
+			}
+			allEntries[status] = entries
+		}
+		
+		// Update cache (both memory and disk)
+		animeListCache = allEntries
+		cacheValid = true
+		saveCacheToDisk()
+	}()
 }
 
 // Update handles messages

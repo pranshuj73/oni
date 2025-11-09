@@ -193,7 +193,7 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusCursor = 0
 					return m, nil
 				}
-			}
+				}
 
 			// Delegate to anime list for navigation
 			if m.animeList != nil {
@@ -261,6 +261,10 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Success {
 			m.successMsg = msg.Message
 			m.err = nil
+			// Trigger background cache refresh after successful update
+			if m.client != nil && !m.cfg.AniList.NoAniList {
+				RefreshCacheInBackground(m.cfg, m.client)
+			}
 		} else {
 			m.err = msg.Err
 		}

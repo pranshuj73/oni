@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -158,8 +159,32 @@ func (m *MainMenu) fetchContinueWatchingAnime() tea.Cmd {
 		// Use incognito or normal history based on current mode
 		history, err := player.LoadHistoryWithIncognito(m.incognitoMode)
 		if err == nil && len(history) > 0 {
-			lastEntry := history[len(history)-1]
-			if lastEntry.Title != "" {
+			// Find the entry with the most recent LastWatched timestamp
+			var lastEntry *player.HistoryEntry
+			var latestTime time.Time
+			
+			for i := range history {
+				entry := &history[i]
+				if entry.Title == "" {
+					continue
+				}
+				
+				// Parse LastWatched timestamp (RFC3339 format)
+				watchedTime, err := time.Parse(time.RFC3339, entry.LastWatched)
+				if err != nil {
+					// If LastWatched is missing or invalid (old format), skip this entry
+					// We can't determine when it was last watched without a proper timestamp
+					continue
+				}
+				
+				// Check if this is the most recent
+				if lastEntry == nil || watchedTime.After(latestTime) {
+					lastEntry = entry
+					latestTime = watchedTime
+				}
+			}
+			
+			if lastEntry != nil {
 				// Just shorten the stored title by splitting on colon
 				shortTitle := shortenTitle(lastEntry.Title)
 				

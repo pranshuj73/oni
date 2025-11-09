@@ -142,6 +142,11 @@ func main() {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 
+	// Start refreshing cache in background if client is available
+	if client != nil && !cfg.AniList.NoAniList {
+		ui.RefreshCacheInBackground(cfg, client)
+	}
+
 	// Create and run the app
 	mainMenu := ui.NewMainMenuWithClient(cfg, client)
 	initialState := StateMainMenu
@@ -532,11 +537,15 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 			episodesTotal = *a.selectedAnime.Episodes
 		}
 
+		// Get current timestamp for LastWatched
+		lastWatched := time.Now().Format(time.RFC3339)
+
 		entry := player.HistoryEntry{
 			MediaID:       a.selectedAnime.ID,
 			Progress:      a.selectedEp,
 			EpisodesTotal: episodesTotal,
 			Timestamp:     playbackInfo.StoppedAt,
+			LastWatched:   lastWatched,
 			Title:         a.selectedAnime.Title.UserPreferred,
 		}
 
