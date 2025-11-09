@@ -182,7 +182,7 @@ oni/
 ### HDRezka
 - Russian-focused provider
 - Multiple quality options
-- Requires complex decryption (partially implemented)
+- Full decryption support implemented
 
 ### Aniworld
 - German provider
@@ -224,9 +224,12 @@ oni/
 - `s` - Save configuration
 - `Esc` - Return to main menu
 
-## Limitations
+## Pending Tasks
 
-- HDRezka provider is partially implemented due to complex encryption/DRM requirements
+- [ ] **Download Anime Menu** - Create a download menu that allows searching for anime to download
+- [ ] **Download Functionality** - Implement download functionality for single episodes and episode ranges
+
+## Limitations
 - Image preview in TUI is not yet implemented
 - Resume from history shows a simple list (could be improved with better UI)
 
