@@ -337,7 +337,8 @@ func (m *AnimeList) createListForStatus(status string, width, height int) list.M
 	}
 	l := list.New(items, delegate, width, listHeight)
 	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(false) // We'll handle search separately
+	l.SetFilteringEnabled(true)
+	l.SetShowFilter(true)
 	l.DisableQuitKeybindings()
 	l.SetShowHelp(false) // Disable built-in help - we use our own universal help
 	
@@ -363,9 +364,32 @@ func (m *AnimeList) getStatusIndex(status string) int {
 }
 
 // updateListsForAllStatuses creates/updates lists for all statuses
+// It preserves filter state if a list is currently being filtered
 func (m *AnimeList) updateListsForAllStatuses() {
 	for _, status := range m.statuses {
-		m.lists[status] = m.createListForStatus(status, m.width, m.height)
+		oldList, exists := m.lists[status]
+		// Preserve filter state if list exists and is currently filtering or has filter applied
+		var preservedFilterState list.FilterState
+		var preservedFilterText string
+		if exists {
+			preservedFilterState = oldList.FilterState()
+			preservedFilterText = oldList.FilterValue()
+		}
+		
+		// Create new list with updated items
+		newList := m.createListForStatus(status, m.width, m.height)
+		
+		// Restore filter state if it was filtering or had filter applied
+		// SetFilterText automatically applies the filter and sets state to FilterApplied
+		if exists && (preservedFilterState == list.Filtering || preservedFilterState == list.FilterApplied) && preservedFilterText != "" {
+			newList.SetFilterText(preservedFilterText)
+			// SetFilterText sets state to FilterApplied, but if it was Filtering, keep it as Filtering
+			if preservedFilterState == list.Filtering {
+				newList.SetFilterState(list.Filtering)
+			}
+		}
+		
+		m.lists[status] = newList
 	}
 }
 
@@ -566,13 +590,43 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
 
+	// Forward non-KeyMsg messages to list when filtering (needed for FilterMatchesMsg)
+	// This must happen before our switch statement so FilterMatchesMsg can be processed
+	// FilterMatchesMsg is sent by filterItems() command and needs to reach the list
+	if m.state == ListResults {
+		currentStatus := m.statuses[m.tabIndex]
+		if currentList, exists := m.lists[currentStatus]; exists {
+			// Forward non-KeyMsg messages to list (FilterMatchesMsg, etc.)
+			// KeyMsg will be handled in the switch statement below
+			if _, isKeyMsg := msg.(tea.KeyMsg); !isKeyMsg {
+				updatedList, listCmd := currentList.Update(msg)
+				m.lists[currentStatus] = updatedList
+				if listCmd != nil {
+					cmds = append(cmds, listCmd)
+				}
+			}
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.help.Width = msg.Width
-		// Update all lists with new dimensions
-		m.updateListsForAllStatuses()
+		// Check if any list is currently filtering - if so, skip rebuild to preserve filter
+		isAnyListFiltering := false
+		for _, status := range m.statuses {
+			if currentList, exists := m.lists[status]; exists {
+				if currentList.FilterState() == list.Filtering || currentList.FilterState() == list.FilterApplied {
+					isAnyListFiltering = true
+					break
+				}
+			}
+		}
+		// Only update lists if not filtering (preserve filter state)
+		if !isAnyListFiltering {
+			m.updateListsForAllStatuses()
+		}
 		// Update search list if it exists
 		if m.state == ListSearchResults && len(m.searchResults) > 0 {
 			items := make([]list.Item, len(m.searchResults))
@@ -590,7 +644,8 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.searchList = list.New(items, delegate, m.width, searchListHeight)
 			m.searchList.SetShowStatusBar(false)
-			m.searchList.SetFilteringEnabled(false)
+			m.searchList.SetFilteringEnabled(true)
+			m.searchList.SetShowFilter(true)
 			m.searchList.DisableQuitKeybindings()
 			m.searchList.SetShowHelp(false) // Disable built-in help
 			m.searchList.Title = "" // No title, we show it in the UI
@@ -599,79 +654,136 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		m.spinner, cmd = m.spinner.Update(msg)
 		// Check if cache has been updated since we last loaded
+		// But don't rebuild lists if user is currently filtering (would reset filter)
 		if cacheValid && !cacheTimestamp.IsZero() && !m.lastCacheTimestamp.IsZero() {
 			if cacheTimestamp.After(m.lastCacheTimestamp) {
-				// Cache has been updated, reload from it
-				m.entries = make(map[string][]anilist.MediaListEntry)
-				for status, entries := range animeListCache {
-					m.entries[status] = make([]anilist.MediaListEntry, len(entries))
-					copy(m.entries[status], entries)
+				// Check if any list is currently filtering - if so, skip rebuild
+				isAnyListFiltering := false
+				for _, status := range m.statuses {
+					if currentList, exists := m.lists[status]; exists {
+						if currentList.FilterState() == list.Filtering {
+							isAnyListFiltering = true
+							break
+						}
+					}
 				}
-				m.lastCacheTimestamp = cacheTimestamp
-				// Rebuild all lists with new data
-				m.updateListsForAllStatuses()
+				
+				if !isAnyListFiltering {
+					// Cache has been updated, reload from it
+					m.entries = make(map[string][]anilist.MediaListEntry)
+					for status, entries := range animeListCache {
+						m.entries[status] = make([]anilist.MediaListEntry, len(entries))
+						copy(m.entries[status], entries)
+					}
+					m.lastCacheTimestamp = cacheTimestamp
+					// Rebuild all lists with new data
+					m.updateListsForAllStatuses()
+				}
 			}
 		}
 		return m, cmd
 
 	case tea.KeyMsg:
-		// Handle universal keys first, but skip in search input state
-		if m.state != ListSearchInput {
-			switch {
-			case key.Matches(msg, m.universalKeys.Help):
-				m.help.ShowAll = !m.help.ShowAll
-				return m, nil
-			case key.Matches(msg, m.universalKeys.Quit):
-				return m, func() tea.Msg { return BackMsg{} }
-			}
-		}
-
 		switch m.state {
 		case ListResults:
 			currentStatus := m.statuses[m.tabIndex]
 			currentList := m.lists[currentStatus]
 			
-			// Handle tab switching first
+			// Check filter state before updating (to detect state transitions)
+			wasFiltering := currentList.FilterState() == list.Filtering
+			hadFilterApplied := currentList.FilterState() == list.FilterApplied
+			isEsc := msg.String() == "esc"
+			
+			// Always update the list first so it can process the key and enter filtering mode
+			currentList, cmd = currentList.Update(msg)
+			m.lists[currentStatus] = currentList
+			cmds = append(cmds, cmd)
+			
+			// Check filter state after updating
+			filterState := currentList.FilterState()
+			
+			// If Esc was pressed and filter was active, the list cleared it - don't go back
+			if isEsc && (wasFiltering || hadFilterApplied) {
+				// Filter was cleared by the list, just return
+				return m, tea.Batch(cmds...)
+			}
+			
+			// If we're filtering (actively typing) or filter is applied, handle keys specially
+			if filterState == list.Filtering || filterState == list.FilterApplied {
+				// For keys while actively filtering, let the list handle everything
+				if filterState == list.Filtering {
+					return m, tea.Batch(cmds...)
+				}
+			}
+			
+			// Check if Enter was pressed while filtering (confirms filter, don't select)
+			justConfirmedFilter := wasFiltering && 
+				filterState == list.FilterApplied && 
+				msg.String() == "enter"
+			
+			// If Enter just confirmed the filter, don't handle it as selection
+			if justConfirmedFilter {
+				return m, tea.Batch(cmds...)
+			}
+			
+			// Handle universal keys (but skip Esc if filter is active - already handled above)
+			if m.state != ListSearchInput {
+				// Don't handle Esc as quit if filter is active
+				if msg.String() != "esc" || (filterState != list.Filtering && filterState != list.FilterApplied) {
+					switch {
+					case key.Matches(msg, m.universalKeys.Help):
+						m.help.ShowAll = !m.help.ShowAll
+						return m, nil
+					case key.Matches(msg, m.universalKeys.Quit):
+						return m, func() tea.Msg { return BackMsg{} }
+					}
+				}
+			}
+			
+			// Handle tab switching and other special keys
+			// Esc is already handled above when filter is active
 			switch msg.String() {
-			case "ctrl+c", "esc":
+			case "ctrl+c":
 				return m, func() tea.Msg { return BackMsg{} }
+			case "esc":
+				// Only handle Esc as back if filter is not active
+				if filterState != list.Filtering && filterState != list.FilterApplied {
+					return m, func() tea.Msg { return BackMsg{} }
+				}
+				// If filter is active, it's already been handled above
+				return m, tea.Batch(cmds...)
 
 			case "left", "h":
 				// Switch to previous tab
 				if m.tabIndex > 0 {
 					m.tabIndex--
 				}
-				return m, nil
+				return m, tea.Batch(cmds...)
 
 			case "right", "l":
 				// Switch to next tab
 				if m.tabIndex < len(m.statuses)-1 {
 					m.tabIndex++
 				}
-				return m, nil
+				return m, tea.Batch(cmds...)
 
 			case "r":
 				// Manual refresh
 				if !m.isRefreshing {
 					m.isRefreshing = true
-					return m, m.fetchAllLists
+					return m, tea.Batch(append(cmds, m.fetchAllLists)...)
 				}
-				return m, nil
+				return m, tea.Batch(cmds...)
 
 			case "n", "s":
 				// Start search
 				m.state = ListSearchInput
 				m.searchInput = ""
 				m.searchResults = []anilist.Anime{}
-				return m, nil
+				return m, tea.Batch(cmds...)
 			}
 
-			// Delegate other keys to the list component
-			currentList, cmd = currentList.Update(msg)
-			m.lists[currentStatus] = currentList
-			cmds = append(cmds, cmd)
-
-			// Handle list selection
+			// Handle list selection (only when not filtering and not just confirmed filter)
 			if selectedItem := currentList.SelectedItem(); selectedItem != nil {
 				animeItem := selectedItem.(AnimeItem)
 				switch msg.String() {
@@ -731,8 +843,17 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case ListSearchResults:
+			// Always update the list first to handle filter state changes
+			m.searchList, cmd = m.searchList.Update(msg)
+			cmds = append(cmds, cmd)
+			
+			// If we're actively filtering, don't handle other keys
+			if m.searchList.FilterState() == list.Filtering {
+				return m, tea.Batch(cmds...)
+			}
+			
 			switch msg.String() {
-				case "ctrl+c", "esc", "q", "backspace":
+			case "ctrl+c", "esc", "q":
 				m.state = ListResults
 				m.searchInput = ""
 				m.searchResults = []anilist.Anime{}
@@ -743,10 +864,6 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchResults = []anilist.Anime{}
 				return m, nil
 			}
-
-			// Delegate to search list component
-			m.searchList, cmd = m.searchList.Update(msg)
-			cmds = append(cmds, cmd)
 
 			// Handle selection
 			if selectedItem := m.searchList.SelectedItem(); selectedItem != nil {
@@ -792,7 +909,8 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.searchList = list.New(items, delegate, m.width, searchListHeight)
 			m.searchList.SetShowStatusBar(false)
-			m.searchList.SetFilteringEnabled(false)
+			m.searchList.SetFilteringEnabled(true)
+			m.searchList.SetShowFilter(true)
 			m.searchList.DisableQuitKeybindings()
 			m.searchList.SetShowHelp(false) // Disable built-in help
 			m.searchList.Title = "" // No title, we show it in the UI
@@ -806,11 +924,24 @@ func (m *AnimeList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		// Update entries with new data
 		if msg.Err == nil {
+			// Check if any list is currently filtering - if so, skip rebuild to preserve filter
+			isAnyListFiltering := false
+			for _, status := range m.statuses {
+				if currentList, exists := m.lists[status]; exists {
+					if currentList.FilterState() == list.Filtering || currentList.FilterState() == list.FilterApplied {
+						isAnyListFiltering = true
+						break
+					}
+				}
+			}
+			
 			m.entries = msg.AllEntries
 			m.err = nil
 			m.lastCacheTimestamp = cacheTimestamp // Update our cache timestamp tracking
-			// Rebuild all lists with new data
-			m.updateListsForAllStatuses()
+			// Only rebuild lists if not filtering (preserve filter state)
+			if !isAnyListFiltering {
+				m.updateListsForAllStatuses()
+			}
 		} else {
 			m.err = msg.Err
 		}
@@ -970,11 +1101,24 @@ func (m *AnimeList) View() string {
 	if listHeight < 5 {
 		listHeight = 5 // Minimum height
 	}
-	// Update list height dynamically to fill available space
-	currentList.SetHeight(listHeight)
-	// Update title with current count
-	statusLabel := m.statusLabels[m.tabIndex]
-	currentList.Title = fmt.Sprintf("%s (%d)", statusLabel, len(m.entries[currentStatus]))
+	// Don't modify the list while filtering - this might reset the filter state
+	filterState := currentList.FilterState()
+	isFiltering := filterState == list.Filtering
+	
+	// Only update height and title when NOT filtering to avoid resetting filter
+	if !isFiltering {
+		// Update list height dynamically to fill available space (only if changed)
+		if currentList.Height() != listHeight {
+			currentList.SetHeight(listHeight)
+		}
+		
+		// Update title with current count (only if changed to avoid resetting filter)
+		newTitle := fmt.Sprintf("%s (%d)", m.statusLabels[m.tabIndex], len(m.entries[currentStatus]))
+		if currentList.Title != newTitle {
+			currentList.Title = newTitle
+		}
+	}
+	
 	m.lists[currentStatus] = currentList
 	// Render the list component
 	s += currentList.View()
