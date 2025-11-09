@@ -61,6 +61,20 @@ func (p *HDRezkaProvider) GetEpisodeInfo(ctx context.Context, mediaID int, episo
 
 	searchTitle := strings.ReplaceAll(matchesTitle[1], " ", "+")
 
+	// Check cache first
+	cached, err := LoadProviderMapping("hdrezka", mediaID)
+	if err == nil && cached != nil {
+		// Parse cached provider ID (format: "mediaType|episodeID")
+		parts := strings.Split(cached.ProviderID, "|")
+		if len(parts) == 2 {
+			return &EpisodeInfo{
+				EpisodeID:    parts[1],
+				EpisodeTitle: fmt.Sprintf("Episode %d", episodeNum),
+				MediaType:    parts[0],
+			}, nil
+		}
+	}
+
 	// Search on hdrezka
 	searchURL := fmt.Sprintf("https://hdrezka.website/search/?do=search&subaction=search&q=%s", searchTitle)
 
@@ -92,6 +106,10 @@ func (p *HDRezkaProvider) GetEpisodeInfo(ctx context.Context, mediaID int, episo
 
 	mediaType := matchesResult[2]
 	episodeID := fmt.Sprintf("%s/%s", matchesResult[3], matchesResult[4])
+
+	// Save to cache (store as "mediaType|episodeID" for easy parsing)
+	cacheValue := fmt.Sprintf("%s|%s", mediaType, episodeID)
+	SaveProviderMapping("hdrezka", mediaID, cacheValue, title)
 
 	return &EpisodeInfo{
 		EpisodeID:    episodeID,

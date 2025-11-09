@@ -38,6 +38,17 @@ func (p *AllAnimeProvider) Name() string {
 
 // GetEpisodeInfo searches for anime and returns episode info
 func (p *AllAnimeProvider) GetEpisodeInfo(ctx context.Context, mediaID int, episodeNum int, title string) (*EpisodeInfo, error) {
+	// Check cache first
+	cached, err := LoadProviderMapping("allanime", mediaID)
+	if err == nil && cached != nil {
+		// Use cached provider ID
+		return &EpisodeInfo{
+			EpisodeID:    fmt.Sprintf("%d", episodeNum),
+			EpisodeTitle: fmt.Sprintf("Episode %d", episodeNum),
+			ShowID:       cached.ProviderID,
+		}, nil
+	}
+
 	// Search for the anime
 	queryTitle := strings.ReplaceAll(title, " ", "+")
 
@@ -118,6 +129,9 @@ func (p *AllAnimeProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 
 	// Use the first result
 	show := searchResp.Data.Shows.Edges[0]
+
+	// Save to cache
+	SaveProviderMapping("allanime", mediaID, show.ID, title)
 
 	return &EpisodeInfo{
 		EpisodeID:    fmt.Sprintf("%d", episodeNum),
