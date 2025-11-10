@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/pranshuj73/oni/config"
+	"github.com/pranshuj73/oni/logger"
 	"github.com/pranshuj73/oni/providers"
 )
 
@@ -29,14 +30,24 @@ type PlaybackInfo struct {
 
 // GetPlayer returns a player by name
 func GetPlayer(cfg *config.Config) (Player, error) {
+	logger.Debug("Getting player", map[string]interface{}{
+		"player": cfg.Player.Player,
+	})
+
 	switch cfg.Player.Player {
 	case "mpv", "mpv.exe":
+		logger.Info("Using MPV player", nil)
 		return NewMPVPlayer(cfg), nil
 	case "vlc":
+		logger.Info("Using VLC player", nil)
 		return NewVLCPlayer(cfg), nil
 	case "iina":
+		logger.Info("Using IINA player", nil)
 		return NewIINAPlayer(cfg), nil
 	default:
+		logger.Error("Unknown player", nil, map[string]interface{}{
+			"player": cfg.Player.Player,
+		})
 		return nil, fmt.Errorf("unknown player: %s", cfg.Player.Player)
 	}
 }

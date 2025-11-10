@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pranshuj73/oni/config"
+	"github.com/pranshuj73/oni/logger"
 )
 
 // HistoryEntry represents a watch history entry
@@ -38,6 +39,10 @@ func LoadHistoryWithConfig(cfg *config.Config) ([]HistoryEntry, error) {
 
 // LoadHistoryWithIncognito loads the watch history (incognito or normal)
 func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
+	logger.Debug("Loading watch history", map[string]interface{}{
+		"incognito": incognito,
+	})
+
 	historyPath, err := GetHistoryPathWithIncognito(incognito)
 	if err != nil {
 		return nil, err
@@ -46,8 +51,16 @@ func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
 	file, err := os.Open(historyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			logger.Debug("History file does not exist", map[string]interface{}{
+				"path":      historyPath,
+				"incognito": incognito,
+			})
 			return []HistoryEntry{}, nil
 		}
+		logger.Error("Failed to open history file", err, map[string]interface{}{
+			"path":      historyPath,
+			"incognito": incognito,
+		})
 		return nil, fmt.Errorf("failed to open history file: %w", err)
 	}
 	defer file.Close()
@@ -126,8 +139,18 @@ func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
+		logger.Error("Failed to scan history file", err, map[string]interface{}{
+			"path":      historyPath,
+			"incognito": incognito,
+		})
 		return nil, fmt.Errorf("failed to scan history file: %w", err)
 	}
+
+	logger.Info("Watch history loaded", map[string]interface{}{
+		"path":         historyPath,
+		"incognito":    incognito,
+		"entriesCount": len(entries),
+	})
 
 	return entries, nil
 }
@@ -149,6 +172,13 @@ func SaveHistoryEntryWithConfig(entry HistoryEntry, cfg *config.Config) error {
 
 // SaveHistoryEntryWithIncognito saves or updates a history entry (incognito or normal)
 func SaveHistoryEntryWithIncognito(entry HistoryEntry, incognito bool) error {
+	logger.Debug("Saving history entry", map[string]interface{}{
+		"mediaID":   entry.MediaID,
+		"progress":  entry.Progress,
+		"title":     entry.Title,
+		"incognito": incognito,
+	})
+
 	historyPath, err := GetHistoryPathWithIncognito(incognito)
 	if err != nil {
 		return err
@@ -166,17 +196,27 @@ func SaveHistoryEntryWithIncognito(entry HistoryEntry, incognito bool) error {
 		if e.MediaID == entry.MediaID {
 			entries[i] = entry
 			found = true
+			logger.Debug("Updated existing history entry", map[string]interface{}{
+				"mediaID": entry.MediaID,
+			})
 			break
 		}
 	}
 
 	if !found {
 		entries = append(entries, entry)
+		logger.Debug("Added new history entry", map[string]interface{}{
+			"mediaID": entry.MediaID,
+		})
 	}
 
 	// Write back to file
 	file, err := os.Create(historyPath)
 	if err != nil {
+		logger.Error("Failed to create history file", err, map[string]interface{}{
+			"path":      historyPath,
+			"incognito": incognito,
+		})
 		return fmt.Errorf("failed to create history file: %w", err)
 	}
 	defer file.Close()
@@ -193,9 +233,20 @@ func SaveHistoryEntryWithIncognito(entry HistoryEntry, incognito bool) error {
 			e.Title,
 		)
 		if _, err := file.WriteString(line); err != nil {
+			logger.Error("Failed to write history entry", err, map[string]interface{}{
+				"mediaID":   e.MediaID,
+				"incognito": incognito,
+			})
 			return fmt.Errorf("failed to write history entry: %w", err)
 		}
 	}
+
+	logger.Info("History entry saved successfully", map[string]interface{}{
+		"mediaID":   entry.MediaID,
+		"progress":  entry.Progress,
+		"incognito": incognito,
+		"path":      historyPath,
+	})
 
 	return nil
 }

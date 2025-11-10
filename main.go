@@ -15,6 +15,7 @@ import (
 	"github.com/pranshuj73/oni/anilist"
 	"github.com/pranshuj73/oni/config"
 	"github.com/pranshuj73/oni/discord"
+	"github.com/pranshuj73/oni/logger"
 	"github.com/pranshuj73/oni/player"
 	"github.com/pranshuj73/oni/providers"
 	"github.com/pranshuj73/oni/ui"
@@ -71,44 +72,72 @@ func main() {
 
 	flag.Parse()
 
+	// Initialize logger
+	if err := logger.Initialize(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+
+	logger.Info("Application started", map[string]interface{}{
+		"version": version,
+	})
+
 	if *showVersion {
 		fmt.Printf("oni version %s\n", version)
+		logger.Info("Version displayed", nil)
 		os.Exit(0)
 	}
 
 	if *showHelp {
 		showUsage()
+		logger.Info("Help displayed", nil)
 		os.Exit(0)
 	}
 
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
+		logger.Fatal("Failed to load configuration", err, nil)
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
+	logger.Info("Configuration loaded", nil)
+
 	// Apply command-line overrides
 	if *quality != "" {
 		cfg.Provider.Quality = *quality
+		logger.Debug("Quality override applied", map[string]interface{}{
+			"quality": *quality,
+		})
 	}
 	if *provider != "" {
 		cfg.Provider.Provider = *provider
+		logger.Debug("Provider override applied", map[string]interface{}{
+			"provider": *provider,
+		})
 	}
 	if *subOrDub != "" {
 		cfg.Playback.SubOrDub = *subOrDub
+		logger.Debug("SubOrDub override applied", map[string]interface{}{
+			"subOrDub": *subOrDub,
+		})
 	}
 	if *discordPresence {
 		cfg.Discord.DiscordPresence = true
+		logger.Debug("Discord presence enabled via flag", nil)
 	}
 
 	// Handle config edit mode
 	if *editConfig {
+		logger.Info("Entering config edit mode", nil)
 		p := tea.NewProgram(ui.NewConfigEditor(cfg))
 		if _, err := p.Run(); err != nil {
+			logger.Error("Config editor error", err, nil)
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		logger.Info("Config editor closed", nil)
 		os.Exit(0)
 	}
 
@@ -116,25 +145,41 @@ func main() {
 	var client *anilist.Client
 	var needsAuth bool
 	if !cfg.AniList.NoAniList {
+		logger.Debug("Attempting to load AniList token", nil)
 		token, err := anilist.LoadToken()
 		if err == nil && token != "" {
+			logger.Debug("AniList token found, creating client", nil)
 			// Token exists, try to create client
 			client, err = anilist.NewClient()
 			if err != nil {
 				// Token might be invalid, need re-auth
+				logger.Warn("AniList client creation failed, auth required", map[string]interface{}{
+					"error": err.Error(),
+				})
 				needsAuth = true
+			} else {
+				logger.Info("AniList client created successfully", nil)
 			}
 		} else {
 			// No token, need auth
+			logger.Debug("No AniList token found, auth required", nil)
 			needsAuth = true
 		}
+	} else {
+		logger.Info("AniList integration disabled", nil)
 	}
 
 	// Create Discord presence manager
 	discordMgr := discord.NewPresenceManager(cfg.Discord.DiscordPresence)
 	if cfg.Discord.DiscordPresence {
+		logger.Debug("Attempting to connect to Discord", nil)
 		if err := discordMgr.Connect(); err != nil {
+			logger.Warn("Failed to connect to Discord", map[string]interface{}{
+				"error": err.Error(),
+			})
 			fmt.Fprintf(os.Stderr, "Warning: Failed to connect to Discord: %v\n", err)
+		} else {
+			logger.Info("Discord connected successfully", nil)
 		}
 	}
 
@@ -155,8 +200,11 @@ func main() {
 	
 	// If we need auth and not using NoAniList, show auth screen first
 	if needsAuth && !cfg.AniList.NoAniList {
+		logger.Info("Starting with AniList auth screen", nil)
 		initialState = StateAniListAuth
 		initialModel = ui.NewAniListAuth(cfg)
+	} else {
+		logger.Info("Starting with main menu", nil)
 	}
 	
 	app := &App{
@@ -169,17 +217,25 @@ func main() {
 		spinner:      s,
 	}
 
+	logger.Info("Starting TUI application", nil)
+
 	// Use alternate screen buffer for fullscreen app experience
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
+		logger.Fatal("TUI application error", err, nil)
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
+	logger.Info("TUI application closed", nil)
+
 	// Cleanup
 	if cfg.Discord.DiscordPresence {
+		logger.Debug("Clearing Discord presence", nil)
 		discordMgr.Clear()
 	}
+
+	logger.Info("Application shutdown complete", nil)
 }
 
 func (a *App) Init() tea.Cmd {
@@ -312,6 +368,12 @@ func (a *App) View() string {
 		s += styles.Error.Render("⚠ Error") + "\n\n"
 		s += styles.Info.Render(a.err.Error()) + "\n\n"
 		
+		// Add log file path reference
+		logPath := logger.GetLogFilePath()
+		if logPath != "" {
+			s += styles.Help.Render(fmt.Sprintf("Details saved to: %s", logPath)) + "\n\n"
+		}
+		
 		s += styles.Prompt.Render("Options:") + "\n"
 		s += styles.MenuItem.Render("  Enter") + " " + styles.Help.Render("→ Go to Watch Anime menu") + "\n"
 		s += styles.MenuItem.Render("  Esc/Backspace/m") + " " + styles.Help.Render("→ Go back to main menu") + "\n"
@@ -339,27 +401,37 @@ func (a *App) View() string {
 }
 
 func (a *App) handleMenuSelection(selection string, showEpisodeSelect bool) (tea.Model, tea.Cmd) {
+	logger.Debug("Menu selection", map[string]interface{}{
+		"selection":        selection,
+		"showEpisodeSelect": showEpisodeSelect,
+	})
+
 	switch selection {
 	case "Continue Watching":
+		logger.Info("User selected Continue Watching", nil)
 		a.loadingMsg = "Finding your next episode..."
 		return a, a.fetchContinueWatching(showEpisodeSelect)
 
 	case "Watch Anime":
+		logger.Info("User selected Watch Anime", nil)
 		a.state = StateAnimeList
 		a.currentModel = ui.NewAnimeList(a.cfg, a.client)
 		return a, a.currentModel.Init()
 
 	case "Update Progress/Status/Score":
+		logger.Info("User selected Update Progress/Status/Score", nil)
 		a.state = StateUpdateProgress
 		a.currentModel = ui.NewUpdateProgress(a.cfg, a.client)
 		return a, a.currentModel.Init()
 
 	case "Settings":
+		logger.Info("User selected Settings", nil)
 		a.state = StateEditConfig
 		a.currentModel = ui.NewConfigEditor(a.cfg)
 		return a, a.currentModel.Init()
 
 	case "Quit":
+		logger.Info("User selected Quit", nil)
 		return a, tea.Quit
 	}
 
@@ -380,9 +452,17 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 		// Get current incognito mode state from main menu
 		a.incognitoMode = a.mainMenu.GetIncognitoMode()
 		
+		logger.Debug("Fetching continue watching", map[string]interface{}{
+			"incognitoMode": a.incognitoMode,
+		})
+
 		// Use incognito or normal history based on current mode
 		history, err := player.LoadHistoryWithIncognito(a.incognitoMode)
 		if err != nil || len(history) == 0 {
+			logger.Warn("No anime found to continue watching", map[string]interface{}{
+				"error":         err,
+				"historyLength": len(history),
+			})
 			return ContinueWatchingResultMsg{
 				Err: fmt.Errorf("no anime found to continue watching"),
 			}
@@ -413,10 +493,17 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 		}
 		
 		if lastEntry == nil {
+      logger.Debug("No anime found to continue watching.", nil)
 			return ContinueWatchingResultMsg{
 				Err: fmt.Errorf("no anime found to continue watching"),
 			}
-		}
+    } else {
+      logger.Debug("Found last watched anime", map[string]interface{}{
+        "mediaID":  lastEntry.MediaID,
+        "title":    lastEntry.Title,
+        "progress": lastEntry.Progress,
+      })
+    }
 		
 		// Calculate which episode to play based on 95% completion check (same logic as main_menu.go)
 		var episodeToPlay int
@@ -463,6 +550,9 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 		if !a.cfg.AniList.NoAniList && a.client != nil {
 			animeInfo, err := a.client.GetAnimeInfo(context.Background(), lastEntry.MediaID)
 			if err == nil {
+				logger.Info("Fetched anime info from AniList", map[string]interface{}{
+					"mediaID": lastEntry.MediaID,
+				})
 				entry := anilist.MediaListEntry{
 					Media:    *animeInfo,
 					Progress: lastEntry.Progress,
@@ -473,10 +563,15 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 					ShowEpisodeSelect: showEpisodeSelect,
 				}
 			}
+			logger.Warn("Failed to fetch anime info from AniList", map[string]interface{}{
+				"error":   err.Error(),
+				"mediaID": lastEntry.MediaID,
+			})
 		}
 
 		// If AniList not available or fetch failed, create a minimal entry from history
 		// This will require searching by title when playing
+		logger.Debug("Using minimal entry from history", nil)
 		entry := anilist.MediaListEntry{
 			Media: anilist.Anime{
 				ID:    lastEntry.MediaID,
@@ -544,26 +639,57 @@ type PlayVideoMsg struct {
 func (a *App) fetchAndPlayEpisode() tea.Cmd {
 	return func() tea.Msg {
 		if a.selectedAnime == nil {
+			logger.Error("No anime selected for playback", nil, nil)
 			return PlayEpisodeResultMsg{Err: fmt.Errorf("no anime selected")}
 		}
+
+		logger.Info("Fetching episode", map[string]interface{}{
+			"mediaID":  a.selectedAnime.ID,
+			"title":    a.selectedAnime.Title.UserPreferred,
+			"episode":  a.selectedEp,
+			"provider": a.cfg.Provider.Provider,
+			"quality":  a.cfg.Provider.Quality,
+			"subOrDub": a.subOrDub,
+		})
 
 		// Get provider
 		prov, err := providers.GetProvider(a.cfg.Provider.Provider)
 		if err != nil {
+			logger.Error("Failed to get provider", err, map[string]interface{}{
+				"provider": a.cfg.Provider.Provider,
+			})
 			return PlayEpisodeResultMsg{Err: err}
 		}
 
 		// Get episode info
 		epInfo, err := prov.GetEpisodeInfo(context.Background(), a.selectedAnime.ID, a.selectedEp, a.selectedAnime.Title.UserPreferred)
 		if err != nil {
+			logger.Error("Failed to get episode info", err, map[string]interface{}{
+				"mediaID":  a.selectedAnime.ID,
+				"episode":  a.selectedEp,
+				"provider": a.cfg.Provider.Provider,
+			})
 			return PlayEpisodeResultMsg{Err: fmt.Errorf("failed to get episode info: %w", err)}
 		}
+
+		logger.Debug("Episode info fetched", map[string]interface{}{
+			"episodeID": epInfo.EpisodeID,
+		})
 
 		// Get video link
 		videoData, err := prov.GetVideoLink(context.Background(), epInfo, a.cfg.Provider.Quality, a.subOrDub)
 		if err != nil {
+			logger.Error("Failed to get video link", err, map[string]interface{}{
+				"episodeID": epInfo.EpisodeID,
+				"quality":   a.cfg.Provider.Quality,
+				"subOrDub":  a.subOrDub,
+			})
 			return PlayEpisodeResultMsg{Err: fmt.Errorf("failed to get video link: %w", err)}
 		}
+
+		logger.Info("Video link fetched successfully", map[string]interface{}{
+			"hasSubtitles": len(videoData.SubtitleURLs) > 0,
+		})
 
 		return PlayEpisodeResultMsg{VideoData: videoData}
 	}
@@ -571,10 +697,16 @@ func (a *App) fetchAndPlayEpisode() tea.Cmd {
 
 func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.Cmd) {
 	if a.selectedAnime == nil {
+		logger.Error("No anime selected in handlePlayEpisode", nil, nil)
 		a.err = fmt.Errorf("no anime selected")
 		a.loadingMsg = ""
 		return a, nil
 	}
+
+	logger.Info("Starting playback", map[string]interface{}{
+		"title":   a.selectedAnime.Title.UserPreferred,
+		"episode": a.selectedEp,
+	})
 
 	// Set Discord presence (only if not in incognito mode)
 	a.incognitoMode = a.mainMenu.GetIncognitoMode()
@@ -583,6 +715,10 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 		if a.selectedAnime.StartDate.Year != nil {
 			year = *a.selectedAnime.StartDate.Year
 		}
+		logger.Debug("Setting Discord presence", map[string]interface{}{
+			"title":   a.selectedAnime.Title.UserPreferred,
+			"episode": a.selectedEp,
+		})
 		a.discordMgr.SetPresence(
 			a.selectedAnime.Title.UserPreferred,
 			a.selectedEp,
@@ -594,6 +730,9 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 	// Get player
 	plyr, err := player.GetPlayer(a.cfg)
 	if err != nil {
+		logger.Error("Failed to get player", err, map[string]interface{}{
+			"player": a.cfg.Player.Player,
+		})
 		a.err = err
 		a.loadingMsg = ""
 		return a, nil
@@ -644,6 +783,10 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 				resumeFrom = "00:00:00"
 			}
 		}
+    
+    logger.Debug("Resume point found", map[string]interface{}{
+			"timestamp": resumeFrom,
+		})
 	}
 
 	// Play video
@@ -652,9 +795,19 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 	playbackInfo, err := plyr.Play(context.Background(), videoData, title, resumeFrom)
 	a.loadingMsg = "" // Clear loading after play starts
 	if err != nil {
+		logger.Error("Failed to play video", err, map[string]interface{}{
+			"title":   title,
+			"player":  a.cfg.Player.Player,
+		})
 		a.err = fmt.Errorf("failed to play video: %w", err)
 		return a, nil
 	}
+  
+  logger.Info("Playback completed", map[string]interface{}{
+		"completedSuccessful": playbackInfo.CompletedSuccessful,
+		"stoppedAt":           playbackInfo.StoppedAt,
+		"percentProgress":     playbackInfo.PercentageProgress,
+	})
 
 	// Save history entry when episode starts
 	episodesTotal := 9999
@@ -710,8 +863,19 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 
 		// Update history entry with actual playback position
 		if err := player.SaveHistoryEntryWithIncognito(updatedEntry, a.incognitoMode); err != nil {
+      logger.Error("Failed to save history", err, map[string]interface{}{
+				"mediaID":        a.selectedAnime.ID,
+				"episode":        a.selectedEp,
+				"incognitoMode": a.incognitoMode,
+			})
 			fmt.Fprintf(os.Stderr, "Warning: Failed to save history after playback: %v\n", err)
-		}
+    } else {
+      logger.Info("History saved", map[string]interface{}{
+				"mediaID":        a.selectedAnime.ID,
+				"episode":        a.selectedEp,
+				"incognitoMode": a.incognitoMode,
+			})
+    }
 	}
 
 	// Update AniList progress separately (if enabled, episode completed, and NOT in incognito mode)
@@ -721,9 +885,25 @@ func (a *App) handlePlayEpisode(videoData *providers.VideoData) (tea.Model, tea.
 			status = "COMPLETED"
 		}
 
+		logger.Debug("Updating AniList progress", map[string]interface{}{
+			"mediaID": a.selectedAnime.ID,
+			"episode": a.selectedEp,
+			"status":  status,
+		})
+
 		err := a.client.UpdateProgress(context.Background(), a.selectedAnime.ID, a.selectedEp, status)
 		if err != nil {
+			logger.Error("Failed to update AniList progress", err, map[string]interface{}{
+				"mediaID": a.selectedAnime.ID,
+				"episode": a.selectedEp,
+			})
 			fmt.Fprintf(os.Stderr, "Warning: Failed to update AniList progress: %v\n", err)
+		} else {
+			logger.Info("AniList progress updated", map[string]interface{}{
+				"mediaID": a.selectedAnime.ID,
+				"episode": a.selectedEp,
+				"status":  status,
+			})
 		}
 		// Note: We don't delete from local history even if AniList marks it as completed
 		// Local history is independent and preserved at all times
