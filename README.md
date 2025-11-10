@@ -9,7 +9,7 @@ A modern rewrite of [jerry](https://github.com/justchokingaround/jerry) in Go wi
 - 🚀 **Instant Loading** - Cached lists load instantly on subsequent visits
 - 📜 **Smart Scrolling** - Clean 5-item view with automatic scroll indicators
 - 🔄 **Async Refresh** - Background updates without blocking UI
-- 📺 **Multiple Providers** - Support for allanime, aniwatch, yugen, hdrezka, aniworld, and crunchyroll
+- 📺 **Multiple Providers** - Support for allanime, aniwatch, yugen, hdrezka, and aniworld
 - 🔄 **AniList Integration** - Sync your watch progress, scores, and status
 - 🎮 **Discord Presence** - Show what you're watching on Discord
 - 🎬 **Multiple Players** - Support for mpv, vlc, and iina
@@ -55,7 +55,7 @@ Options:
   -h             Show help
   -q <quality>   Video quality (e.g., 1080, 720)
   -v             Show version
-  -w <provider>  Provider (allanime, aniwatch, yugen, hdrezka, aniworld, crunchyroll)
+  -w <provider>  Provider (allanime, aniwatch, yugen, hdrezka, aniworld)
   --sub-or-dub   Audio type (sub, dub)
 ```
 
@@ -144,8 +144,7 @@ oni/
 │   ├── aniwatch.go         # Aniwatch scraper
 │   ├── yugen.go            # Yugen scraper
 │   ├── hdrezka.go          # HDRezka scraper
-│   ├── aniworld.go         # Aniworld scraper
-│   └── crunchyroll.go      # Crunchyroll integration
+│   └── aniworld.go         # Aniworld scraper
 ├── player/                 # Video player integration
 │   ├── player.go           # Player interface
 │   ├── mpv.go              # MPV implementation
@@ -183,17 +182,12 @@ oni/
 ### HDRezka
 - Russian-focused provider
 - Multiple quality options
-- Requires complex decryption (partially implemented)
+- Full decryption support implemented
 
 ### Aniworld
 - German provider
 - Good selection
 - M3U8 streams
-
-### Crunchyroll
-- Official source
-- Requires DRM handling (partially implemented)
-- Best subtitle quality
 
 ## Data Storage
 
@@ -230,9 +224,12 @@ oni/
 - `s` - Save configuration
 - `Esc` - Return to main menu
 
-## Limitations
+## Pending Tasks
 
-- HDRezka and Crunchyroll providers are partially implemented due to complex encryption/DRM requirements
+- [ ] **Download Anime Menu** - Create a download menu that allows searching for anime to download
+- [ ] **Download Functionality** - Implement download functionality for single episodes and episode ranges
+
+## Limitations
 - Image preview in TUI is not yet implemented
 - Resume from history shows a simple list (could be improved with better UI)
 

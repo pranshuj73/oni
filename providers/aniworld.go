@@ -58,6 +58,16 @@ func (p *AniWorldProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 
 	searchTitle := strings.ReplaceAll(matchesTitle[1], " ", "+")
 
+	// Check cache first
+	cached, err := LoadProviderMapping("aniworld", mediaID)
+	if err == nil && cached != nil {
+		// Use cached provider ID (anime link)
+		return &EpisodeInfo{
+			EpisodeID:    cached.ProviderID,
+			EpisodeTitle: fmt.Sprintf("Episode %d", episodeNum),
+		}, nil
+	}
+
 	// Search on aniworld
 	searchURL := "https://aniworld.to/ajax/search"
 
@@ -111,6 +121,9 @@ func (p *AniWorldProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 
 	// Use first result
 	animeLink := results[0].Link
+
+	// Save to cache
+	SaveProviderMapping("aniworld", mediaID, animeLink, title)
 
 	return &EpisodeInfo{
 		EpisodeID:    animeLink,

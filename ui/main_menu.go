@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -158,21 +160,80 @@ func (m *MainMenu) fetchContinueWatchingAnime() tea.Cmd {
 		// Use incognito or normal history based on current mode
 		history, err := player.LoadHistoryWithIncognito(m.incognitoMode)
 		if err == nil && len(history) > 0 {
-			lastEntry := history[len(history)-1]
-			if lastEntry.Title != "" {
+			// Find the entry with the most recent LastWatched timestamp
+			var lastEntry *player.HistoryEntry
+			var latestTime time.Time
+			
+			for i := range history {
+				entry := &history[i]
+				if entry.Title == "" {
+					continue
+				}
+				
+				// Parse LastWatched timestamp (RFC3339 format)
+				watchedTime, err := time.Parse(time.RFC3339, entry.LastWatched)
+				if err != nil {
+					// If LastWatched is missing or invalid (old format), skip this entry
+					// We can't determine when it was last watched without a proper timestamp
+					continue
+				}
+				
+				// Check if this is the most recent
+				if lastEntry == nil || watchedTime.After(latestTime) {
+					lastEntry = entry
+					latestTime = watchedTime
+				}
+			}
+			
+			if lastEntry != nil {
 				// Just shorten the stored title by splitting on colon
 				shortTitle := shortenTitle(lastEntry.Title)
 				
-				// Show next episode (progress + 1) in the menu
-				nextEpisode := lastEntry.Progress + 1
-				// Don't exceed total episodes
-				if lastEntry.EpisodesTotal > 0 && nextEpisode > lastEntry.EpisodesTotal {
-					nextEpisode = lastEntry.EpisodesTotal
+				// Calculate completion percentage from Timestamp and Duration
+				// Only show next episode if previous episode was at least 95% complete
+				var episodeToShow int
+				var isComplete bool
+				
+				if lastEntry.Duration != "" && lastEntry.Timestamp != "" && lastEntry.Timestamp != "00:00:00" {
+					// Parse timestamp (current position)
+					timestampParts := strings.Split(lastEntry.Timestamp, ":")
+					if len(timestampParts) == 3 {
+						hours, _ := strconv.Atoi(timestampParts[0])
+						minutes, _ := strconv.Atoi(timestampParts[1])
+						seconds, _ := strconv.Atoi(timestampParts[2])
+						currentSeconds := hours*3600 + minutes*60 + seconds
+						
+						// Parse duration (total length)
+						durationParts := strings.Split(lastEntry.Duration, ":")
+						if len(durationParts) == 3 {
+							durHours, _ := strconv.Atoi(durationParts[0])
+							durMinutes, _ := strconv.Atoi(durationParts[1])
+							durSeconds, _ := strconv.Atoi(durationParts[2])
+							totalSeconds := durHours*3600 + durMinutes*60 + durSeconds
+							
+							if totalSeconds > 0 {
+								percentage := (float64(currentSeconds) / float64(totalSeconds)) * 100
+								isComplete = percentage >= 95.0
+							}
+						}
+					}
+				}
+				
+				if isComplete {
+					// Show next episode (progress + 1) if previous was 95%+ complete
+					episodeToShow = lastEntry.Progress + 1
+					// Don't exceed total episodes
+					if lastEntry.EpisodesTotal > 0 && episodeToShow > lastEntry.EpisodesTotal {
+						episodeToShow = lastEntry.EpisodesTotal
+					}
+				} else {
+					// Show same episode if not 95% complete
+					episodeToShow = lastEntry.Progress
 				}
 				
 				return ContinueWatchingAnimeMsg{
 					AnimeName: shortTitle,
-					Episode:   nextEpisode,
+					Episode:   episodeToShow,
 				}
 			}
 		}

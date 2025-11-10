@@ -93,7 +93,7 @@ func (m *AniListAuth) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.verifying = true
 				return m, m.verifyToken(token)
 			}
-		case "esc":
+		case "esc", "q", "backspace":
 			if !m.verifying {
 				return m, tea.Quit
 			}

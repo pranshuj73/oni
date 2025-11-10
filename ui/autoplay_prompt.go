@@ -76,7 +76,7 @@ func (m *AutoplayPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				return AutoplayPromptMsg{EnableAutoplay: false}
 			}
-		case "esc":
+		case "esc", "q", "backspace":
 			return m, func() tea.Msg { return BackMsg{} }
 		}
 

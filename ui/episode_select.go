@@ -132,7 +132,7 @@ func (m *EpisodeSelect) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.state {
 		case EpisodeSubDubSelect:
 			switch msg.String() {
-			case "ctrl+c", "esc":
+			case "ctrl+c", "esc", "q", "backspace":
 				return m, func() tea.Msg { return BackMsg{} }
 
 			case "up", "k":
@@ -152,10 +152,14 @@ func (m *EpisodeSelect) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case EpisodeNumberInput:
 			switch msg.String() {
-			case "ctrl+c", "esc":
+			case "ctrl+c", "esc", "q":
 				return m, func() tea.Msg { return BackMsg{} }
 
 			case "backspace":
+				// Check if we should go back or delete character
+				if len(m.episodeInput) == 0 {
+					return m, func() tea.Msg { return BackMsg{} }
+				}
 				if len(m.episodeInput) > 0 {
 					m.episodeInput = m.episodeInput[:len(m.episodeInput)-1]
 				}
@@ -248,7 +252,8 @@ func (m *EpisodeSelect) View() string {
 		return s
 
 	case EpisodeReady:
-		return fmt.Sprintf("%s %s\n", m.spinner.View(), m.styles.Success.Render("Loading episode..."))
+		// Loading is handled by main app, just return empty to avoid duplicate loaders
+		return ""
 	}
 
 	return ""

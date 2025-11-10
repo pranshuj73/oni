@@ -56,9 +56,6 @@ func GetProvider(name string) (Provider, error) {
 	case "aniworld":
 		logger.Info("Using AniWorld provider", nil)
 		return NewAniWorldProvider(), nil
-	case "crunchyroll":
-		logger.Info("Using Crunchyroll provider", nil)
-		return NewCrunchyrollProvider(), nil
 	default:
 		logger.Error("Unknown provider", nil, map[string]interface{}{
 			"provider": name,

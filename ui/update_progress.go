@@ -156,7 +156,7 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.state {
 		case UpdateTypeSelection:
 			switch msg.String() {
-			case "ctrl+c", "esc":
+			case "ctrl+c", "esc", "q", "backspace":
 				return m, func() tea.Msg { return BackMsg{} }
 
 			case "up", "k":
@@ -178,7 +178,7 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case UpdateAnimeSelection:
 			// Handle back navigation
-			if msg.String() == "ctrl+c" || msg.String() == "esc" {
+			if msg.String() == "ctrl+c" || msg.String() == "esc" || msg.String() == "q" || msg.String() == "backspace" {
 				m.state = UpdateTypeSelection
 				m.animeList = nil
 				return m, nil
@@ -193,7 +193,7 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusCursor = 0
 					return m, nil
 				}
-			}
+				}
 
 			// Delegate to anime list for navigation
 			if m.animeList != nil {
@@ -206,7 +206,7 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.updateType {
 			case UpdateStatus:
 				switch msg.String() {
-				case "ctrl+c", "esc":
+				case "ctrl+c", "esc", "q", "backspace":
 					return m, func() tea.Msg { return BackMsg{} }
 
 				case "up", "k":
@@ -226,10 +226,14 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			default: // UpdateEpisode or UpdateScore
 				switch msg.String() {
-				case "ctrl+c", "esc":
+				case "ctrl+c", "esc", "q":
 					return m, func() tea.Msg { return BackMsg{} }
 
 				case "backspace":
+					// Check if we should go back or delete character
+					if len(m.inputValue) == 0 {
+						return m, func() tea.Msg { return BackMsg{} }
+					}
 					if len(m.inputValue) > 0 {
 						m.inputValue = m.inputValue[:len(m.inputValue)-1]
 					}
@@ -251,7 +255,7 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case UpdateComplete:
 			switch msg.String() {
-			case "enter", "esc", "ctrl+c":
+			case "enter", "esc", "ctrl+c", "q", "backspace":
 				return m, func() tea.Msg { return BackMsg{} }
 			}
 		}
@@ -261,6 +265,11 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Success {
 			m.successMsg = msg.Message
 			m.err = nil
+			// Trigger background cache refresh after successful update
+			// Use ForceRefreshCacheInBackground to bypass 5-minute check
+			if m.client != nil && !m.cfg.AniList.NoAniList {
+				ForceRefreshCacheInBackground(m.cfg, m.client)
+			}
 		} else {
 			m.err = msg.Err
 		}

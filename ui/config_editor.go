@@ -65,7 +65,7 @@ func NewConfigEditor(cfg *config.Config) *ConfigEditor {
 	items := []ConfigItem{
 		{"player", "Player", cfg.Player.Player, ConfigTypeText, "Player", nil},
 		{"player_arguments", "Player Arguments", cfg.Player.PlayerArguments, ConfigTypeText, "Player", nil},
-		{"provider", "Provider", cfg.Provider.Provider, ConfigTypeSelect, "Provider", []string{"allanime", "aniwatch", "yugen", "hdrezka", "aniworld", "crunchyroll"}},
+		{"provider", "Provider", cfg.Provider.Provider, ConfigTypeSelect, "Provider", []string{"allanime", "aniwatch", "yugen", "hdrezka", "aniworld"}},
 		{"quality", "Quality", cfg.Provider.Quality, ConfigTypeSelect, "Provider", []string{"1080", "720", "480", "360", "240", "best", "worst"}},
 		{"sub_or_dub", "Sub or Dub", cfg.Playback.SubOrDub, ConfigTypeSelect, "Playback", []string{"sub", "dub"}},
 		{"subs_language", "Subtitles Language", cfg.Playback.SubsLanguage, ConfigTypeText, "Playback", nil},
@@ -128,7 +128,7 @@ func (m *ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.state {
 		case ConfigMenuSelection:
 			switch msg.String() {
-			case "esc":
+			case "esc", "q", "backspace":
 				return m, func() tea.Msg { return BackMsg{} }
 
 			case "up", "k":
@@ -178,7 +178,7 @@ func (m *ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case ConfigTextEdit:
 			switch msg.String() {
-			case "esc":
+			case "esc", "q", "backspace":
 				m.state = ConfigMenuSelection
 				m.textInput.Blur()
 
@@ -196,19 +196,41 @@ func (m *ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case ConfigSelectEdit:
+			// Don't match any of the keys below if we're actively filtering.
+			if m.selectList.FilterState() == list.Filtering {
+				var cmd tea.Cmd
+				m.selectList, cmd = m.selectList.Update(msg)
+				// Update cursor based on selected item
+				if selectedItem := m.selectList.SelectedItem(); selectedItem != nil {
+					item := selectedItem.(selectItem)
+					for i, opt := range m.selectOptions {
+						if opt == item.title {
+							m.selectCursor = i
+							break
+						}
+					}
+				}
+				return m, cmd
+			}
+			
 			switch msg.String() {
-			case "esc":
+			case "esc", "q", "backspace":
 				m.state = ConfigMenuSelection
+				return m, nil
 
 			case "up", "k":
 				if m.selectCursor > 0 {
 					m.selectCursor--
+					m.selectList.Select(m.selectCursor)
 				}
+				return m, nil
 
 			case "down", "j":
 				if m.selectCursor < len(m.selectOptions)-1 {
 					m.selectCursor++
+					m.selectList.Select(m.selectCursor)
 				}
+				return m, nil
 
 			case "enter":
 				item := &m.configItems[m.cursor]
@@ -216,7 +238,23 @@ func (m *ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyConfigChange(item.Name, selectedValue)
 				item.Value = selectedValue
 				m.state = ConfigMenuSelection
+				return m, nil
 			}
+			
+			// Delegate to list component for other keys (like filtering)
+			var cmd tea.Cmd
+			m.selectList, cmd = m.selectList.Update(msg)
+			// Sync cursor position
+			if selectedItem := m.selectList.SelectedItem(); selectedItem != nil {
+				item := selectedItem.(selectItem)
+				for i, opt := range m.selectOptions {
+					if opt == item.title {
+						m.selectCursor = i
+						break
+					}
+				}
+			}
+			return m, cmd
 
 		case ConfigSaved:
 			switch msg.String() {
@@ -255,10 +293,22 @@ func (m *ConfigEditor) buildSelectList() {
 	delegate.Styles.SelectedDesc = delegate.Styles.SelectedTitle.Copy().
 		Foreground(lipgloss.Color("#E0E0E0"))
 
-	l := list.New(items, delegate, 20, 10)
+	// Use reasonable dimensions for the select list
+	// Reserve space for title, info text, and help
+	listWidth := 40
+	listHeight := 10
+	if len(m.selectOptions) < listHeight {
+		listHeight = len(m.selectOptions)
+	}
+	if listHeight < 3 {
+		listHeight = 3
+	}
+	
+	l := list.New(items, delegate, listWidth, listHeight)
 	l.Title = "Select Option"
 	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(false)
+	l.SetFilteringEnabled(true)
+	l.SetShowFilter(true)
 	l.SetShowHelp(false)
 	l.Select(m.selectCursor)
 	m.selectList = l
@@ -270,6 +320,8 @@ type selectItem struct {
 	selected bool
 }
 
+func (i selectItem) Title() string       { return i.title }
+func (i selectItem) Description() string { return "" }
 func (i selectItem) FilterValue() string { return i.title }
 
 // applyConfigChange applies a configuration change
@@ -411,17 +463,8 @@ func (m *ConfigEditor) View() string {
 		s := m.styles.Title.Render("Settings") + "\n\n"
 		s += m.styles.Info.Render(fmt.Sprintf("Select: %s", item.DisplayName)) + "\n\n"
 		
-		// Show options with cursor
-		for i, opt := range m.selectOptions {
-			cursor := " "
-			if i == m.selectCursor {
-				cursor = ">"
-				s += m.styles.SelectedItem.Render(cursor + " " + opt) + "\n"
-			} else {
-				s += m.styles.MenuItem.Render(cursor + " " + opt) + "\n"
-			}
-		}
-		
+		// Use list component view for filtering support
+		s += m.selectList.View()
 		s += "\n"
 		
 		helpKeys := configSelectKeyMap{

@@ -18,7 +18,7 @@ func DefaultUniversalKeys() UniversalKeys {
 			key.WithHelp("?", "toggle help"),
 		),
 		Quit: key.NewBinding(
-			key.WithKeys("q", "ctrl+c"),
+			key.WithKeys("q", "ctrl+c", "esc"),
 			key.WithHelp("q", "quit"),
 		),
 	}

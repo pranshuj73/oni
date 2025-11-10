@@ -194,6 +194,7 @@ func (p *MPVPlayer) parseOutput(filePath string) (*PlaybackInfo, error) {
 	defer file.Close()
 
 	var lastPosition string
+	var lastTotalDuration string
 	var lastPercentage int
 
 	// Regular expression to match: AV: 00:01:23 / 00:24:56 (5%)
@@ -205,6 +206,7 @@ func (p *MPVPlayer) parseOutput(filePath string) (*PlaybackInfo, error) {
 		matches := re.FindStringSubmatch(line)
 		if len(matches) >= 4 {
 			lastPosition = matches[1]
+			lastTotalDuration = matches[2] // Extract total duration
 			lastPercentage, _ = strconv.Atoi(matches[3])
 		}
 	}
@@ -216,12 +218,14 @@ func (p *MPVPlayer) parseOutput(filePath string) (*PlaybackInfo, error) {
 	if lastPosition == "" {
 		return &PlaybackInfo{
 			StoppedAt:          "00:00:00",
+			TotalDuration:      "",
 			PercentageProgress: 0,
 		}, nil
 	}
 
 	return &PlaybackInfo{
 		StoppedAt:           lastPosition,
+		TotalDuration:       lastTotalDuration,
 		PercentageProgress:  lastPercentage,
 		CompletedSuccessful: lastPercentage >= 85,
 	}, nil
