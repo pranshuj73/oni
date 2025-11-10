@@ -21,7 +21,7 @@ import (
 	"github.com/pranshuj73/oni/ui"
 )
 
-const version = "0.1.2"
+const version = "0.1.4"
 
 // AppState represents the current application state
 type AppState int
