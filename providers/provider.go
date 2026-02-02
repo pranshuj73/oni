@@ -34,33 +34,45 @@ type VideoData struct {
 	Referer      string
 }
 
-// GetProvider returns a provider by name
+// GetProvider returns a provider by name, wrapped with retry logic
 func GetProvider(name string) (Provider, error) {
 	logger.Debug("Getting provider", map[string]interface{}{
 		"provider": name,
 	})
 
+	var baseProvider Provider
+
 	switch name {
 	case "allanime":
 		logger.Info("Using AllAnime provider", nil)
-		return NewAllAnimeProvider(), nil
+		baseProvider = NewAllAnimeProvider()
 	case "aniwatch":
 		logger.Info("Using AniWatch provider", nil)
-		return NewAniWatchProvider(), nil
+		baseProvider = NewAniWatchProvider()
 	case "yugen":
 		logger.Info("Using Yugen provider", nil)
-		return NewYugenProvider(), nil
+		baseProvider = NewYugenProvider()
 	case "hdrezka":
 		logger.Info("Using HDRezka provider", nil)
-		return NewHDRezkaProvider(), nil
+		baseProvider = NewHDRezkaProvider()
 	case "aniworld":
 		logger.Info("Using AniWorld provider", nil)
-		return NewAniWorldProvider(), nil
+		baseProvider = NewAniWorldProvider()
 	default:
 		logger.Error("Unknown provider", nil, map[string]interface{}{
 			"provider": name,
 		})
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}
+
+	// Wrap provider with retry logic
+	retryConfig := DefaultRetryConfig()
+	logger.Debug("Wrapping provider with retry logic", map[string]interface{}{
+		"provider":   name,
+		"maxRetries": retryConfig.MaxRetries,
+		"baseDelay":  retryConfig.BaseDelay.String(),
+	})
+
+	return NewProviderWithRetry(baseProvider, retryConfig), nil
 }
 
