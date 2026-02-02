@@ -2,8 +2,10 @@ package player
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -13,13 +15,19 @@ import (
 
 // HistoryEntry represents a watch history entry
 type HistoryEntry struct {
-	MediaID       int
-	Progress      int
-	EpisodesTotal int
-	Timestamp     string // Resume timestamp (where you stopped watching)
-	Duration      string // Total duration of the episode (HH:MM:SS format)
-	LastWatched   string // Last watched timestamp (when you last completed an episode)
-	Title         string
+	MediaID       int    `json:"media_id"`
+	Progress      int    `json:"progress"`
+	EpisodesTotal int    `json:"episodes_total"`
+	Timestamp     string `json:"timestamp"`      // Resume timestamp (where you stopped watching)
+	Duration      string `json:"duration"`       // Total duration of the episode (HH:MM:SS format)
+	LastWatched   string `json:"last_watched"`   // Last watched timestamp (when you last completed an episode)
+	Title         string `json:"title"`
+}
+
+// HistoryFile represents the JSON history file structure
+type HistoryFile struct {
+	Version int            `json:"version"` // File format version for future migrations
+	Entries []HistoryEntry `json:"entries"`
 }
 
 // LoadHistory loads the watch history
@@ -48,7 +56,7 @@ func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
 		return nil, err
 	}
 
-	file, err := os.Open(historyPath)
+	data, err := os.ReadFile(historyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			logger.Debug("History file does not exist", map[string]interface{}{
@@ -57,21 +65,70 @@ func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
 			})
 			return []HistoryEntry{}, nil
 		}
-		logger.Error("Failed to open history file", err, map[string]interface{}{
+		logger.Error("Failed to read history file", err, map[string]interface{}{
 			"path":      historyPath,
 			"incognito": incognito,
 		})
-		return nil, fmt.Errorf("failed to open history file: %w", err)
+		return nil, fmt.Errorf("failed to read history file: %w", err)
 	}
-	defer file.Close()
 
+	// Try to parse as JSON first (new format)
+	var historyFile HistoryFile
+	if err := json.Unmarshal(data, &historyFile); err == nil {
+		logger.Info("Watch history loaded (JSON format)", map[string]interface{}{
+			"path":         historyPath,
+			"incognito":    incognito,
+			"version":      historyFile.Version,
+			"entriesCount": len(historyFile.Entries),
+		})
+		return historyFile.Entries, nil
+	}
+
+	// Fallback: Try to parse as old tab-separated format and migrate
+	logger.Info("Migrating history from old tab-separated format to JSON", map[string]interface{}{
+		"path":      historyPath,
+		"incognito": incognito,
+	})
+
+	entries, err := migrateOldHistoryFormat(string(data))
+	if err != nil {
+		logger.Error("Failed to migrate old history format", err, map[string]interface{}{
+			"path":      historyPath,
+			"incognito": incognito,
+		})
+		return nil, fmt.Errorf("failed to parse history file: %w", err)
+	}
+
+	// Save migrated data in JSON format
+	if len(entries) > 0 {
+		if err := saveHistoryToFile(historyPath, entries); err != nil {
+			logger.Warn("Failed to save migrated history", map[string]interface{}{
+				"path":  historyPath,
+				"error": err.Error(),
+			})
+		} else {
+			logger.Info("Successfully migrated history to JSON format", map[string]interface{}{
+				"path":         historyPath,
+				"entriesCount": len(entries),
+			})
+		}
+	}
+
+	return entries, nil
+}
+
+// migrateOldHistoryFormat migrates old tab-separated format to HistoryEntry slice
+func migrateOldHistoryFormat(data string) ([]HistoryEntry, error) {
 	var entries []HistoryEntry
+	scanner := bufio.NewScanner(strings.NewReader(data))
 
-	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		parts := strings.Split(line, "\t")
+		if line == "" {
+			continue
+		}
 
+		parts := strings.Split(line, "\t")
 		if len(parts) < 4 {
 			continue
 		}
@@ -96,9 +153,8 @@ func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
 			continue
 		}
 
-		// Parse timestamp (resume point)
 		timestamp := parts[2]
-		
+
 		// Parse Duration, LastWatched and Title
 		// Format: MediaID\tProgress/EpisodesTotal\tTimestamp\tDuration\tLastWatched\tTitle
 		// For backward compatibility:
@@ -108,19 +164,17 @@ func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
 		var duration string
 		var lastWatched string
 		var title string
+
 		if len(parts) >= 6 {
-			// New format with Duration
 			duration = parts[3]
 			lastWatched = parts[4]
 			title = strings.Join(parts[5:], "\t")
 		} else if len(parts) >= 5 {
-			// Old format with LastWatched but no Duration
-			duration = "" // No duration stored
+			duration = ""
 			lastWatched = parts[3]
 			title = strings.Join(parts[4:], "\t")
 		} else {
-			// Oldest format without LastWatched or Duration
-			duration = "" // No duration stored
+			duration = ""
 			lastWatched = parts[2]
 			title = strings.Join(parts[3:], "\t")
 		}
@@ -139,18 +193,8 @@ func LoadHistoryWithIncognito(incognito bool) ([]HistoryEntry, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		logger.Error("Failed to scan history file", err, map[string]interface{}{
-			"path":      historyPath,
-			"incognito": incognito,
-		})
-		return nil, fmt.Errorf("failed to scan history file: %w", err)
+		return nil, fmt.Errorf("failed to scan old format: %w", err)
 	}
-
-	logger.Info("Watch history loaded", map[string]interface{}{
-		"path":         historyPath,
-		"incognito":    incognito,
-		"entriesCount": len(entries),
-	})
 
 	return entries, nil
 }
@@ -210,35 +254,13 @@ func SaveHistoryEntryWithIncognito(entry HistoryEntry, incognito bool) error {
 		})
 	}
 
-	// Write back to file
-	file, err := os.Create(historyPath)
-	if err != nil {
-		logger.Error("Failed to create history file", err, map[string]interface{}{
+	// Save to file
+	if err := saveHistoryToFile(historyPath, entries); err != nil {
+		logger.Error("Failed to save history file", err, map[string]interface{}{
 			"path":      historyPath,
 			"incognito": incognito,
 		})
-		return fmt.Errorf("failed to create history file: %w", err)
-	}
-	defer file.Close()
-
-	for _, e := range entries {
-		// Format: MediaID\tProgress/EpisodesTotal\tTimestamp\tDuration\tLastWatched\tTitle
-		line := fmt.Sprintf("%d\t%d/%d\t%s\t%s\t%s\t%s\n",
-			e.MediaID,
-			e.Progress,
-			e.EpisodesTotal,
-			e.Timestamp,
-			e.Duration,
-			e.LastWatched,
-			e.Title,
-		)
-		if _, err := file.WriteString(line); err != nil {
-			logger.Error("Failed to write history entry", err, map[string]interface{}{
-				"mediaID":   e.MediaID,
-				"incognito": incognito,
-			})
-			return fmt.Errorf("failed to write history entry: %w", err)
-		}
+		return err
 	}
 
 	logger.Info("History entry saved successfully", map[string]interface{}{
@@ -251,8 +273,51 @@ func SaveHistoryEntryWithIncognito(entry HistoryEntry, incognito bool) error {
 	return nil
 }
 
+// saveHistoryToFile saves history entries to a JSON file with atomic write
+func saveHistoryToFile(historyPath string, entries []HistoryEntry) error {
+	historyFile := HistoryFile{
+		Version: 1,
+		Entries: entries,
+	}
+
+	// Marshal to JSON with indentation for readability
+	data, err := json.MarshalIndent(historyFile, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal history: %w", err)
+	}
+
+	// Atomic write: write to temp file, then rename
+	dir := filepath.Dir(historyPath)
+	tmpFile, err := os.CreateTemp(dir, "history-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath) // Clean up temp file if rename fails
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, historyPath); err != nil {
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	return nil
+}
+
 // DeleteHistoryEntry deletes a history entry
 func DeleteHistoryEntry(mediaID int) error {
+	logger.Debug("Deleting history entry", map[string]interface{}{
+		"mediaID": mediaID,
+	})
+
 	historyPath, err := GetHistoryPath()
 	if err != nil {
 		return err
@@ -266,31 +331,35 @@ func DeleteHistoryEntry(mediaID int) error {
 
 	// Filter out the entry to delete
 	var newEntries []HistoryEntry
+	deleted := false
 	for _, e := range entries {
 		if e.MediaID != mediaID {
 			newEntries = append(newEntries, e)
+		} else {
+			deleted = true
 		}
 	}
 
-	// Write back to file
-	file, err := os.Create(historyPath)
-	if err != nil {
-		return fmt.Errorf("failed to create history file: %w", err)
+	if !deleted {
+		logger.Debug("History entry not found", map[string]interface{}{
+			"mediaID": mediaID,
+		})
+		return nil // Entry not found, nothing to delete
 	}
-	defer file.Close()
 
-	for _, e := range newEntries {
-		line := fmt.Sprintf("%d\t%d/%d\t%s\t%s\n",
-			e.MediaID,
-			e.Progress,
-			e.EpisodesTotal,
-			e.Timestamp,
-			e.Title,
-		)
-		if _, err := file.WriteString(line); err != nil {
-			return fmt.Errorf("failed to write history entry: %w", err)
-		}
+	// Save updated history
+	if err := saveHistoryToFile(historyPath, newEntries); err != nil {
+		logger.Error("Failed to save history after deletion", err, map[string]interface{}{
+			"mediaID": mediaID,
+			"path":    historyPath,
+		})
+		return fmt.Errorf("failed to save history: %w", err)
 	}
+
+	logger.Info("History entry deleted successfully", map[string]interface{}{
+		"mediaID": mediaID,
+		"path":    historyPath,
+	})
 
 	return nil
 }

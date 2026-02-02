@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/pranshuj73/oni/logger"
 )
@@ -25,8 +26,19 @@ type Client struct {
 func NewClient() (*Client, error) {
 	logger.Debug("Creating new AniList client", nil)
 
+	// Configure HTTP client with timeout and connection pooling
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+
 	client := &Client{
-		httpClient: &http.Client{},
+		httpClient: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: transport,
+		},
 	}
 
 	// Try to load existing token

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // HDRezkaProvider implements the hdrezka provider
@@ -20,8 +21,19 @@ type HDRezkaProvider struct {
 
 // NewHDRezkaProvider creates a new HDRezka provider
 func NewHDRezkaProvider() *HDRezkaProvider {
+	// Configure HTTP client with timeout and connection pooling
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+
 	return &HDRezkaProvider{
-		client: &http.Client{},
+		client: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 

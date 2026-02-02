@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // AniWatchProvider implements the aniwatch provider
@@ -17,8 +18,19 @@ type AniWatchProvider struct {
 
 // NewAniWatchProvider creates a new AniWatch provider
 func NewAniWatchProvider() *AniWatchProvider {
+	// Configure HTTP client with timeout and connection pooling
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+
 	return &AniWatchProvider{
-		client: &http.Client{},
+		client: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 

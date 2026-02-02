@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -26,8 +27,19 @@ type AllAnimeProvider struct {
 
 // NewAllAnimeProvider creates a new AllAnime provider
 func NewAllAnimeProvider() *AllAnimeProvider {
+	// Configure HTTP client with timeout and connection pooling
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+
 	return &AllAnimeProvider{
-		client: &http.Client{},
+		client: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 
@@ -221,35 +233,41 @@ func (p *AllAnimeProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 	}, nil
 }
 
-// extractLinks extracts video links from source URLs - matches jerry.sh exactly
+// sourceURLEntry represents a source URL entry from AllAnime API
+type sourceURLEntry struct {
+	SourceURL  string `json:"sourceUrl"`
+	SourceName string `json:"sourceName"`
+	Type       string `json:"type"`
+}
+
+// extractLinks extracts video links from source URLs
 func (p *AllAnimeProvider) extractLinks(ctx context.Context, sourceURLs json.RawMessage) (map[string]string, error) {
-	// Convert JSON to string and process like jerry.sh line 944
-	jsonStr := string(sourceURLs)
-	// Replace {} with newlines, fix unicode escapes, extract sourceName:sourceUrl pairs
-	jsonStr = strings.ReplaceAll(jsonStr, "{", "\n")
-	jsonStr = strings.ReplaceAll(jsonStr, "}", "\n")
-	jsonStr = strings.ReplaceAll(jsonStr, "\\u002F", "/")
-	jsonStr = strings.ReplaceAll(jsonStr, "\\", "")
-	
-	// Extract sourceName : sourceUrl pairs (jerry.sh: sed -nE 's|.*sourceUrl":"--([^"]*)".*sourceName":"([^"]*)".*|\2 :\1|p')
-	re := regexp.MustCompile(`sourceUrl":"--([^"]*)".*sourceName":"([^"]*)"`)
-	matches := re.FindAllStringSubmatch(jsonStr, -1)
-	
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no source URLs found in response")
+	// Try to parse as array of sourceURLEntry
+	var sources []sourceURLEntry
+	if err := json.Unmarshal(sourceURLs, &sources); err != nil {
+		// Fallback to old string manipulation for backward compatibility
+		return p.extractLinksLegacy(ctx, sourceURLs)
 	}
-	
-	// Build resp string with sourceName :sourceUrl format (matches jerry.sh exactly)
+
+	// Build resp string with sourceName :sourceUrl format
 	var resp strings.Builder
-	for _, match := range matches {
-		if len(match) >= 3 {
-			sourceName := match[2]
-			sourceURL := match[1]
+	for _, source := range sources {
+		// Extract the encoded URL (remove "--" prefix if present)
+		sourceURL := source.SourceURL
+		if strings.HasPrefix(sourceURL, "--") {
+			sourceURL = sourceURL[2:]
+		}
+
+		if sourceURL != "" && source.SourceName != "" {
 			// Format: "sourceName :sourceUrl" (space before colon, no space after)
-			resp.WriteString(fmt.Sprintf("%s :%s\n", sourceName, sourceURL))
+			resp.WriteString(fmt.Sprintf("%s :%s\n", source.SourceName, sourceURL))
 		}
 	}
 	respStr := resp.String()
+
+	if respStr == "" {
+		return nil, fmt.Errorf("no source URLs found in response")
+	}
 
 	// Try all 5 providers in parallel (like jerry.sh does)
 	type providerResult struct {
@@ -282,6 +300,70 @@ func (p *AllAnimeProvider) extractLinks(ctx context.Context, sourceURLs json.Raw
 		return nil, fmt.Errorf("no video links found: all providers failed")
 	}
 	
+	return allLinks, nil
+}
+
+// extractLinksLegacy is a fallback that uses string manipulation for backward compatibility
+func (p *AllAnimeProvider) extractLinksLegacy(ctx context.Context, sourceURLs json.RawMessage) (map[string]string, error) {
+	// Convert JSON to string and process using regex
+	jsonStr := string(sourceURLs)
+
+	// Extract sourceName : sourceUrl pairs using regex
+	// Pattern matches: sourceUrl":"--<url>"  ...  sourceName":"<name>"
+	re := regexp.MustCompile(`sourceUrl":"--([^"]*)".*?sourceName":"([^"]*)"`)
+	matches := re.FindAllStringSubmatch(jsonStr, -1)
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no source URLs found in response (legacy parser)")
+	}
+
+	// Build resp string with sourceName :sourceUrl format
+	var resp strings.Builder
+	for _, match := range matches {
+		if len(match) >= 3 {
+			sourceURL := match[1]   // The URL part (without "--")
+			sourceName := match[2]  // The source name
+
+			// Format: "sourceName :sourceUrl" (space before colon, no space after)
+			resp.WriteString(fmt.Sprintf("%s :%s\n", sourceName, sourceURL))
+		}
+	}
+	respStr := resp.String()
+
+	if respStr == "" {
+		return nil, fmt.Errorf("no source URLs extracted (legacy parser)")
+	}
+
+	// Try all 5 providers in parallel
+	type providerResult struct {
+		links map[string]string
+		err   error
+	}
+
+	results := make(chan providerResult, 5)
+
+	for providerNum := 1; providerNum <= 5; providerNum++ {
+		go func(num int) {
+			links, err := p.generateLinksForProvider(ctx, respStr, num)
+			results <- providerResult{links: links, err: err}
+		}(providerNum)
+	}
+
+	// Collect all results
+	allLinks := make(map[string]string)
+	for i := 0; i < 5; i++ {
+		result := <-results
+		if result.err == nil && len(result.links) > 0 {
+			for quality, link := range result.links {
+				allLinks[quality] = link
+			}
+		}
+	}
+
+	if len(allLinks) == 0 {
+		return nil, fmt.Errorf("no video links found: all providers failed (legacy parser)")
+	}
+
 	return allLinks, nil
 }
 

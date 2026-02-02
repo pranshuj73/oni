@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // YugenProvider implements the yugen provider
@@ -17,8 +18,19 @@ type YugenProvider struct {
 
 // NewYugenProvider creates a new Yugen provider
 func NewYugenProvider() *YugenProvider {
+	// Configure HTTP client with timeout and connection pooling
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+
 	return &YugenProvider{
-		client: &http.Client{},
+		client: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 
