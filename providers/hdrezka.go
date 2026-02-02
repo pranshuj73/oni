@@ -71,7 +71,8 @@ func (p *HDRezkaProvider) GetEpisodeInfo(ctx context.Context, mediaID int, episo
 		return nil, fmt.Errorf("title not found in backup")
 	}
 
-	searchTitle := strings.ReplaceAll(matchesTitle[1], " ", "+")
+	// Properly escape the title for URL use
+	searchTitle := url.QueryEscape(matchesTitle[1])
 
 	// Check cache first
 	cached, err := LoadProviderMapping("hdrezka", mediaID)

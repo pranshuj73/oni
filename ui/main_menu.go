@@ -14,6 +14,7 @@ import (
 	"github.com/pranshuj73/oni/anilist"
 	"github.com/pranshuj73/oni/config"
 	"github.com/pranshuj73/oni/player"
+	"github.com/pranshuj73/oni/utils"
 )
 
 // MainMenu represents the main menu model
@@ -210,26 +211,21 @@ func (m *MainMenu) fetchContinueWatchingAnime() tea.Cmd {
 							durMinutes, _ := strconv.Atoi(durationParts[1])
 							durSeconds, _ := strconv.Atoi(durationParts[2])
 							totalSeconds := durHours*3600 + durMinutes*60 + durSeconds
-							
+
 							if totalSeconds > 0 {
 								percentage := (float64(currentSeconds) / float64(totalSeconds)) * 100
-								isComplete = percentage >= 95.0
+								isComplete = utils.IsEpisodeComplete(percentage)
 							}
 						}
 					}
 				}
-				
+
+				// Calculate which episode to show using shared utility
+				var percentage float64
 				if isComplete {
-					// Show next episode (progress + 1) if previous was 95%+ complete
-					episodeToShow = lastEntry.Progress + 1
-					// Don't exceed total episodes
-					if lastEntry.EpisodesTotal > 0 && episodeToShow > lastEntry.EpisodesTotal {
-						episodeToShow = lastEntry.EpisodesTotal
-					}
-				} else {
-					// Show same episode if not 95% complete
-					episodeToShow = lastEntry.Progress
+					percentage = 100.0
 				}
+				episodeToShow = utils.GetNextEpisode(lastEntry.Progress, lastEntry.EpisodesTotal, percentage)
 				
 				return ContinueWatchingAnimeMsg{
 					AnimeName: shortTitle,

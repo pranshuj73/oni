@@ -62,8 +62,8 @@ func (p *AllAnimeProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 	}
 
 	// Search for the anime
-	queryTitle := strings.ReplaceAll(title, " ", "+")
-
+	// Note: title is used in JSON, which is properly encoded by json.Marshal
+	// No need for manual escaping
 	searchQuery := `query($search: SearchInput, $limit: Int, $page: Int, $translationType: VaildTranslationTypeEnumType, $countryOrigin: VaildCountryOriginEnumType) {
 		shows(search: $search, limit: $limit, page: $page, translationType: $translationType, countryOrigin: $countryOrigin) {
 			edges {
@@ -79,7 +79,7 @@ func (p *AllAnimeProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 		"search": map[string]interface{}{
 			"allowAdult":   false,
 			"allowUnknown": false,
-			"query":        queryTitle,
+			"query":        title, // JSON encoding handles special characters
 		},
 		"limit":           40,
 		"page":            1,

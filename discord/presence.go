@@ -2,11 +2,25 @@ package discord
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/hugolgst/rich-go/client"
 	"github.com/pranshuj73/oni/logger"
 )
+
+const defaultDiscordAppID = "1436820992306450532"
+
+// getDiscordAppID returns the Discord app ID from environment variable or default
+func getDiscordAppID() string {
+	if appID := os.Getenv("ONI_DISCORD_APP_ID"); appID != "" {
+		logger.Debug("Using custom Discord app ID from environment", map[string]interface{}{
+			"source": "ONI_DISCORD_APP_ID",
+		})
+		return appID
+	}
+	return defaultDiscordAppID
+}
 
 // PresenceManager manages Discord Rich Presence
 type PresenceManager struct {
@@ -34,9 +48,12 @@ func (pm *PresenceManager) Connect() error {
 		return nil
 	}
 
-	logger.Debug("Attempting to connect to Discord", nil)
+	appID := getDiscordAppID()
+	logger.Debug("Attempting to connect to Discord", map[string]interface{}{
+		"appID": appID,
+	})
 
-	err := client.Login("1436820992306450532") // You should use your own Discord application ID
+	err := client.Login(appID)
 	if err != nil {
 		// Don't error if Discord is not running
 		logger.Warn("Failed to connect to Discord", map[string]interface{}{

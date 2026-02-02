@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -68,7 +69,8 @@ func (p *AniWorldProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 		return nil, fmt.Errorf("title not found in backup")
 	}
 
-	searchTitle := strings.ReplaceAll(matchesTitle[1], " ", "+")
+	// Properly escape the title for URL use
+	searchTitle := url.QueryEscape(matchesTitle[1])
 
 	// Check cache first
 	cached, err := LoadProviderMapping("aniworld", mediaID)

@@ -19,6 +19,7 @@ import (
 	"github.com/pranshuj73/oni/player"
 	"github.com/pranshuj73/oni/providers"
 	"github.com/pranshuj73/oni/ui"
+	"github.com/pranshuj73/oni/utils"
 )
 
 const version = "0.1.4"
@@ -528,23 +529,18 @@ func (a *App) fetchContinueWatching(showEpisodeSelect bool) tea.Cmd {
 					
 					if totalSeconds > 0 {
 						percentage := (float64(currentSeconds) / float64(totalSeconds)) * 100
-						isComplete = percentage >= 95.0
+						isComplete = utils.IsEpisodeComplete(percentage)
 					}
 				}
 			}
 		}
-		
+
+		// Calculate which episode to play using shared utility
+		var percentage float64
 		if isComplete {
-			// Play next episode (progress + 1) if previous was 95%+ complete
-			episodeToPlay = lastEntry.Progress + 1
-			// Don't exceed total episodes
-			if lastEntry.EpisodesTotal > 0 && episodeToPlay > lastEntry.EpisodesTotal {
-				episodeToPlay = lastEntry.EpisodesTotal
-			}
-		} else {
-			// Play same episode if not 95% complete
-			episodeToPlay = lastEntry.Progress
+			percentage = 100.0
 		}
+		episodeToPlay = utils.GetNextEpisode(lastEntry.Progress, lastEntry.EpisodesTotal, percentage)
 		
 		// If AniList is available, fetch full anime info
 		if !a.cfg.AniList.NoAniList && a.client != nil {

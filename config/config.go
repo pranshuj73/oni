@@ -136,6 +136,14 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		logger.Error("Configuration validation failed", err, map[string]interface{}{
+			"path": configPath,
+		})
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	logger.Info("Configuration loaded successfully", map[string]interface{}{
 		"path":     configPath,
 		"player":   cfg.Player.Player,
