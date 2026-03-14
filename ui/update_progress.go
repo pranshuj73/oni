@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -277,8 +276,8 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusCursor = 0
 			return m, func() tea.Msg {
 				return ToastMsg{
-					Text:     m.styles.Success.Render(msg.Message),
-					Duration: 3 * time.Second,
+					Text: msg.Message,
+					Kind: ToastSuccess,
 				}
 			}
 		} else {
@@ -289,8 +288,8 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, func() tea.Msg {
 				return ToastMsg{
-					Text:     m.styles.Error.Render(fmt.Sprintf("Update failed: %v", msg.Err)),
-					Duration: 4 * time.Second,
+					Text: fmt.Sprintf("Update failed: %v", msg.Err),
+					Kind: ToastError,
 				}
 			}
 		}

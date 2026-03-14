@@ -294,11 +294,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ui.ToastMsg:
 		a.toastID++
-		a.toastMsg = msg.Text
+		styles := ui.DefaultStyles()
+		switch msg.Kind {
+		case ui.ToastError:
+			a.toastMsg = styles.Error.Render(msg.Text)
+		case ui.ToastSuccess:
+			a.toastMsg = styles.Success.Render(msg.Text)
+		default:
+			a.toastMsg = msg.Text
+		}
 		toastID := a.toastID
 		duration := msg.Duration
 		if duration <= 0 {
-			duration = 3 * time.Second
+			if msg.Kind == ui.ToastError {
+				duration = 3 * ui.DefaultToastDuration
+			} else {
+				duration = ui.DefaultToastDuration
+			}
 		}
 		return a, tea.Tick(duration, func(time.Time) tea.Msg {
 			return ui.ClearToastMsg{ID: toastID}

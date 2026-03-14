@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -276,16 +275,16 @@ func (m *ConfigEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.Err
 			return m, func() tea.Msg {
 				return ToastMsg{
-					Text:     m.styles.Error.Render(fmt.Sprintf("Error saving settings: %v", msg.Err)),
-					Duration: 4 * time.Second,
+					Text: fmt.Sprintf("Error saving settings: %v", msg.Err),
+					Kind: ToastError,
 				}
 			}
 		}
 		m.err = nil
 		return m, func() tea.Msg {
 			return ToastMsg{
-				Text:     m.styles.Success.Render("Settings saved"),
-				Duration: 3 * time.Second,
+				Text: "Settings saved",
+				Kind: ToastSuccess,
 			}
 		}
 	}
