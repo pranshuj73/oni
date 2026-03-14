@@ -501,12 +501,12 @@ func (m *ConfigEditor) View() string {
 	case ConfigSaved:
 		if m.err != nil {
 			s := m.styles.Error.Render(fmt.Sprintf("Error saving settings: %v", m.err)) + "\n\n"
-			s += m.styles.Help.Render("press any key to continue")
+			s += m.styles.Help.Render("press enter/esc to continue")
 			return s
 		}
 
 		s := m.styles.Success.Render("Settings saved successfully!") + "\n\n"
-		s += m.styles.Help.Render("press any key to continue")
+		s += m.styles.Help.Render("press enter/esc to continue")
 		return s
 	}
 

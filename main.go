@@ -129,19 +129,6 @@ func main() {
 		logger.Debug("Discord presence enabled via flag", nil)
 	}
 
-	// Handle config edit mode
-	if *editConfig {
-		logger.Info("Entering config edit mode", nil)
-		p := tea.NewProgram(ui.NewConfigEditor(cfg))
-		if _, err := p.Run(); err != nil {
-			logger.Error("Config editor error", err, nil)
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		logger.Info("Config editor closed", nil)
-		os.Exit(0)
-	}
-
 	// Try to load existing AniList token
 	var client *anilist.Client
 	var needsAuth bool
@@ -199,8 +186,13 @@ func main() {
 	initialState := StateMainMenu
 	var initialModel tea.Model = mainMenu
 	
-	// If we need auth and not using NoAniList, show auth screen first
-	if needsAuth && !cfg.AniList.NoAniList {
+	// If we are editing config directly, start in config editor
+	if *editConfig {
+		logger.Info("Starting with config editor (via -e)", nil)
+		initialState = StateEditConfig
+		initialModel = ui.NewConfigEditor(cfg)
+	} else if needsAuth && !cfg.AniList.NoAniList {
+		// If we need auth and not using NoAniList, show auth screen first
 		logger.Info("Starting with AniList auth screen", nil)
 		initialState = StateAniListAuth
 		initialModel = ui.NewAniListAuth(cfg)
@@ -1054,4 +1046,3 @@ Examples:
 
 `)
 }
-

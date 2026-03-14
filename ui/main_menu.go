@@ -41,20 +41,21 @@ type mainMenuKeyMap struct {
 	Down          key.Binding
 	Select        key.Binding
 	SelectEpisode key.Binding
+	EditConfig    key.Binding
 	Incognito     key.Binding
 	Quit          key.Binding
 }
 
 // ShortHelp returns keybindings to be shown in the mini help view
 func (k mainMenuKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Select, k.Incognito, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Select, k.EditConfig, k.Incognito, k.Quit}
 }
 
 // FullHelp returns keybindings for the full help view
 func (k mainMenuKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Select, k.SelectEpisode},
-		{k.Incognito, k.Quit},
+		{k.EditConfig, k.Incognito, k.Quit},
 	}
 }
 
@@ -76,6 +77,10 @@ func DefaultMainMenuKeyMap() mainMenuKeyMap {
 		SelectEpisode: key.NewBinding(
 			key.WithKeys("s", "shift+enter"),
 			key.WithHelp("s", "select episode"),
+		),
+		EditConfig: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "Edit Configuration"),
 		),
 		Incognito: key.NewBinding(
 			key.WithKeys("p"),
@@ -300,6 +305,12 @@ func (m *MainMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return MenuSelectionMsg{Selection: m.selected, ShowEpisodeSelect: false}
 			}
 		
+		case key.Matches(msg, m.keys.EditConfig):
+			m.selected = "Settings"
+			return m, func() tea.Msg {
+				return MenuSelectionMsg{Selection: m.selected, ShowEpisodeSelect: false}
+			}
+		
 		case key.Matches(msg, m.keys.SelectEpisode):
 			// If on "Continue Watching", 's' key or Shift+Enter opens episode selection
 			if strings.HasPrefix(m.options[m.cursor], "Continue Watching") {
@@ -376,11 +387,13 @@ func (m *MainMenu) View() string {
 			viewFull = [][]key.Binding{
 				{m.keys.Up, m.keys.Down},
 				{key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "auto-play")), m.keys.SelectEpisode},
+				{m.keys.EditConfig, m.keys.Incognito},
 			}
 		} else {
 			viewKeys = []key.Binding{m.keys.Up, m.keys.Down, m.keys.Select}
 			viewFull = [][]key.Binding{
 				{m.keys.Up, m.keys.Down, m.keys.Select},
+				{m.keys.EditConfig, m.keys.Incognito},
 			}
 		}
 		
@@ -416,4 +429,3 @@ func (m *MainMenu) SetLoadingMsg(msg string) {
 func (m *MainMenu) GetIncognitoMode() bool {
 	return m.incognitoMode
 }
-
