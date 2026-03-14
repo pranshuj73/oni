@@ -57,6 +57,8 @@ type App struct {
 	lastAnimeID    int           // Track the last anime watched for session detection
 	lastWatchTime  time.Time     // Track when the last episode was watched
 	incognitoMode  bool          // Runtime incognito mode state
+	toastMsg       string        // Transient footer message
+	toastID        int           // Monotonic id to clear the latest toast
 }
 
 func main() {
@@ -290,6 +292,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.BackMsg:
 		return a.handleBack()
 
+	case ui.ToastMsg:
+		a.toastID++
+		a.toastMsg = msg.Text
+		toastID := a.toastID
+		duration := msg.Duration
+		if duration <= 0 {
+			duration = 3 * time.Second
+		}
+		return a, tea.Tick(duration, func(time.Time) tea.Msg {
+			return ui.ClearToastMsg{ID: toastID}
+		})
+
+	case ui.ClearToastMsg:
+		if msg.ID == a.toastID {
+			a.toastMsg = ""
+		}
+		return a, nil
+
 	case ContinueWatchingResultMsg:
 		a.loadingMsg = "" // Clear loading
 		if msg.Err != nil {
@@ -388,6 +408,13 @@ func (a *App) View() string {
 		// Add loading message in green
 		styles := ui.DefaultStyles()
 		view += "\n" + a.spinner.View() + " " + styles.Success.Render(a.loadingMsg)
+	} else if a.toastMsg != "" {
+		lines := strings.Split(view, "\n")
+		if len(lines) > 0 {
+			lines = lines[:len(lines)-1]
+			view = strings.Join(lines, "\n")
+		}
+		view += "\n" + a.toastMsg
 	}
 
 	return view

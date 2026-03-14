@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -261,7 +262,6 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case UpdateCompleteMsg:
-		m.state = UpdateComplete
 		if msg.Success {
 			m.successMsg = msg.Message
 			m.err = nil
@@ -270,8 +270,29 @@ func (m *UpdateProgress) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.client != nil && !m.cfg.AniList.NoAniList {
 				ForceRefreshCacheInBackground(m.cfg, m.client)
 			}
+			m.state = UpdateTypeSelection
+			m.animeList = nil
+			m.selectedEntry = nil
+			m.inputValue = ""
+			m.statusCursor = 0
+			return m, func() tea.Msg {
+				return ToastMsg{
+					Text:     m.styles.Success.Render(msg.Message),
+					Duration: 3 * time.Second,
+				}
+			}
 		} else {
 			m.err = msg.Err
+			// Keep the user in the current input state and show a toast.
+			if m.state == UpdateProcessing {
+				m.state = UpdateInputEntry
+			}
+			return m, func() tea.Msg {
+				return ToastMsg{
+					Text:     m.styles.Error.Render(fmt.Sprintf("Update failed: %v", msg.Err)),
+					Duration: 4 * time.Second,
+				}
+			}
 		}
 	}
 
@@ -364,4 +385,3 @@ func (m *UpdateProgress) View() string {
 
 	return ""
 }
-
