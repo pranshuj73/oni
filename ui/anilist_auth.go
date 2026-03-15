@@ -73,16 +73,6 @@ func (m *AniListAuth) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
-		// Handle universal keys
-		switch {
-		case key.Matches(msg, m.universalKeys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-			return m, nil
-		case key.Matches(msg, m.universalKeys.Quit):
-			return m, tea.Quit
-		}
-
-		// Handle auth-specific keys
 		switch msg.String() {
 		case "enter":
 			if !m.verifying && m.textInput.Value() != "" {
@@ -93,7 +83,7 @@ func (m *AniListAuth) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.verifying = true
 				return m, m.verifyToken(token)
 			}
-		case "esc", "q", "backspace":
+		case "esc":
 			if !m.verifying {
 				return m, tea.Quit
 			}
@@ -151,22 +141,16 @@ func (m *AniListAuth) View() string {
 	// Help
 	helpKeys := anilistAuthKeyMap{
 		Enter: key.NewBinding(
-			key.WithKeys("enter"),
+			key.WithKeys("Enter"),
 			key.WithHelp("enter", "submit token"),
 		),
 		Esc: key.NewBinding(
-			key.WithKeys("esc"),
+			key.WithKeys("Esc"),
 			key.WithHelp("esc", "quit"),
 		),
 	}
 
-	extendedKeys := ExtendedKeyMap{
-		Universal: m.universalKeys,
-		ViewKeys:  helpKeys.ShortHelp(),
-		ViewFull:  helpKeys.FullHelp(),
-	}
-
-	s += "\n" + m.help.View(extendedKeys)
+	s += "\n" + m.help.View(helpKeys)
 	return s
 }
 
@@ -221,4 +205,3 @@ func (k anilistAuthKeyMap) FullHelp() [][]key.Binding {
 		{k.Enter, k.Esc},
 	}
 }
-
