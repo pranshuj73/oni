@@ -39,6 +39,23 @@ func (p *AniWatchProvider) Name() string {
 	return "aniwatch"
 }
 
+// hiAnimeLines extracts the HTML from a hianime AJAX response (which wraps HTML in a JSON
+// envelope) and returns it split into one-tag-per-line, matching jerry.sh's approach of
+// `sed "s/</\n/g; s/\\\//g"`.
+func hiAnimeLines(body []byte) []string {
+	// Try to unwrap the JSON envelope {"html":"..."}
+	var envelope struct {
+		HTML string `json:"html"`
+	}
+	html := string(body)
+	if err := json.Unmarshal(body, &envelope); err == nil && envelope.HTML != "" {
+		html = envelope.HTML
+	}
+	// Unescape JSON-encoded forward slashes and split on "<"
+	html = strings.ReplaceAll(html, `\/`, `/`)
+	return strings.Split(html, "<")
+}
+
 // GetEpisodeInfo fetches episode information from aniwatch
 func (p *AniWatchProvider) GetEpisodeInfo(ctx context.Context, mediaID int, episodeNum int, title string) (*EpisodeInfo, error) {
 	// Fetch aniwatch ID from mal-backup
@@ -60,20 +77,42 @@ func (p *AniWatchProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Extract aniwatch ID
-	re := regexp.MustCompile(`"Zoro".*?"url":".*-([0-9]+)"`)
-	matches := re.FindStringSubmatch(string(body))
+	// Parse the backup JSON and extract the hianime show ID from known site keys.
+	// The URL format is "https://<domain>/<slug>-<id>" — we want the trailing numeric ID.
+	var backup struct {
+		Sites map[string]map[string]struct {
+			URL string `json:"url"`
+		} `json:"Sites"`
+	}
+	if err := json.Unmarshal(body, &backup); err != nil {
+		return nil, fmt.Errorf("failed to parse backup JSON: %w", err)
+	}
 
-	if len(matches) < 2 {
+	var aniwatchID string
+	reTrailingID := regexp.MustCompile(`-(\d+)$`)
+	for _, key := range []string{"Zoro", "Aniwatch", "Zoro-1"} {
+		entries, ok := backup.Sites[key]
+		if !ok {
+			continue
+		}
+		for _, entry := range entries {
+			if m := reTrailingID.FindStringSubmatch(strings.TrimRight(entry.URL, "/")); len(m) >= 2 {
+				aniwatchID = m[1]
+				break
+			}
+		}
+		if aniwatchID != "" {
+			break
+		}
+	}
+
+	if aniwatchID == "" {
 		return nil, fmt.Errorf("aniwatch ID not found for media ID %d", mediaID)
 	}
 
-	aniwatchID := matches[1]
-
 	// Fetch episode list
-	episodeListURL := fmt.Sprintf("https://hianime.to/ajax/v2/episode/list/%s", aniwatchID)
-
-	req, err = http.NewRequestWithContext(ctx, "GET", episodeListURL, nil)
+	req, err = http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("https://hianime.to/ajax/v2/episode/list/%s", aniwatchID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -89,26 +128,58 @@ func (p *AniWatchProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Parse episode data
-	reEp := regexp.MustCompile(fmt.Sprintf(`a title="([^"]*)".*?data-id="([0-9]*)".*?Episode %d`, episodeNum))
-	matchesEp := reEp.FindStringSubmatch(string(body))
+	// Parse episode list: split on "<" (jerry.sh approach) then match per line.
+	// Each episode anchor looks like: a title="Ep Title" ... data-number="N" ... data-id="12345"
+	reEpLine := regexp.MustCompile(`a\s[^>]*title="([^"]*)"[^>]*data-id="(\d+)"`)
+	reDataNum := regexp.MustCompile(`data-number="(\d+)"`)
 
-	if len(matchesEp) < 3 {
+	var episodeID, episodeTitle string
+	for _, line := range hiAnimeLines(body) {
+		m := reEpLine.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		// Prefer data-number attribute for matching the episode
+		numMatch := reDataNum.FindStringSubmatch(line)
+		if numMatch != nil {
+			if numMatch[1] == fmt.Sprintf("%d", episodeNum) {
+				episodeTitle = m[1]
+				episodeID = m[2]
+				break
+			}
+		}
+	}
+
+	// Fallback: take the Nth anchor (1-indexed) if data-number wasn't found
+	if episodeID == "" {
+		count := 0
+		for _, line := range hiAnimeLines(body) {
+			if m := reEpLine.FindStringSubmatch(line); m != nil {
+				count++
+				if count == episodeNum {
+					episodeTitle = m[1]
+					episodeID = m[2]
+					break
+				}
+			}
+		}
+	}
+
+	if episodeID == "" {
 		return nil, fmt.Errorf("episode %d not found", episodeNum)
 	}
 
 	return &EpisodeInfo{
-		EpisodeID:    matchesEp[2],
-		EpisodeTitle: matchesEp[1],
+		EpisodeID:    episodeID,
+		EpisodeTitle: episodeTitle,
 	}, nil
 }
 
 // GetVideoLink extracts video links from aniwatch
 func (p *AniWatchProvider) GetVideoLink(ctx context.Context, episodeInfo *EpisodeInfo, quality string, subOrDub string) (*VideoData, error) {
-	// Get server ID
-	serverURL := fmt.Sprintf("https://hianime.to/ajax/v2/episode/servers?episodeId=%s", episodeInfo.EpisodeID)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", serverURL, nil)
+	// Get server list
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("https://hianime.to/ajax/v2/episode/servers?episodeId=%s", episodeInfo.EpisodeID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -124,25 +195,27 @@ func (p *AniWatchProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Extract server ID for requested type
-	reServer := regexp.MustCompile(fmt.Sprintf(`data-type="%s" data-id="([0-9]*)"`, subOrDub))
-	matchesServer := reServer.FindStringSubmatch(string(body))
-
-	if len(matchesServer) < 2 {
-		// Fallback to raw
-		reServer = regexp.MustCompile(`data-type="raw" data-id="([0-9]*)"`)
-		matchesServer = reServer.FindStringSubmatch(string(body))
-		if len(matchesServer) < 2 {
-			return nil, fmt.Errorf("no server found")
+	// Extract server ID — split on "<" then match per line (jerry.sh approach)
+	reServerLine := regexp.MustCompile(`data-type="([^"]*)"[^>]*data-id="(\d+)"`)
+	var sourceID string
+	for _, preferred := range []string{subOrDub, "raw"} {
+		for _, line := range hiAnimeLines(body) {
+			if m := reServerLine.FindStringSubmatch(line); m != nil && m[1] == preferred {
+				sourceID = m[2]
+				break
+			}
+		}
+		if sourceID != "" {
+			break
 		}
 	}
-
-	sourceID := matchesServer[1]
+	if sourceID == "" {
+		return nil, fmt.Errorf("no server found")
+	}
 
 	// Get embed link
-	embedURL := fmt.Sprintf("https://hianime.to/ajax/v2/episode/sources?id=%s", sourceID)
-
-	req, err = http.NewRequestWithContext(ctx, "GET", embedURL, nil)
+	req, err = http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("https://hianime.to/ajax/v2/episode/sources?id=%s", sourceID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -161,15 +234,13 @@ func (p *AniWatchProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 	var embedResp struct {
 		Link string `json:"link"`
 	}
-
 	if err := json.Unmarshal(body, &embedResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal embed response: %w", err)
 	}
 
 	// Parse embed link
 	reEmbed := regexp.MustCompile(`(.*)/embed-([246])/e-([0-9])/(.*)\?k=1`)
 	matchesEmbed := reEmbed.FindStringSubmatch(embedResp.Link)
-
 	if len(matchesEmbed) < 5 {
 		return nil, fmt.Errorf("invalid embed link format")
 	}
@@ -180,13 +251,11 @@ func (p *AniWatchProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 	embedSourceID := matchesEmbed[4]
 
 	// Get actual source
-	sourceURL := fmt.Sprintf("%s/embed-%s/ajax/e-%s/getSources?id=%s", providerLink, embedType, eNumber, embedSourceID)
-
-	req, err = http.NewRequestWithContext(ctx, "GET", sourceURL, nil)
+	req, err = http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/embed-%s/ajax/e-%s/getSources?id=%s", providerLink, embedType, eNumber, embedSourceID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 
 	resp, err = p.client.Do(req)
@@ -200,29 +269,24 @@ func (p *AniWatchProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Parse video link
-	reVideo := regexp.MustCompile(`"file":"(.*\.m3u8)"`)
+	// Parse video link — JSON response, "file" field ending in .m3u8
+	reVideo := regexp.MustCompile(`"file"\s*:\s*"([^"]*\.m3u8)"`)
 	matchesVideo := reVideo.FindStringSubmatch(string(body))
-
 	if len(matchesVideo) < 2 {
 		return nil, fmt.Errorf("video link not found")
 	}
 
-	videoURL := matchesVideo[1]
-
-	// Apply quality if specified
+	videoURL := strings.ReplaceAll(matchesVideo[1], `\/`, `/`)
 	if quality != "" {
 		videoURL = strings.Replace(videoURL, "/playlist.m3u8", fmt.Sprintf("/%s/index.m3u8", quality), 1)
 	}
 
 	// Extract subtitles
-	reSubs := regexp.MustCompile(`"file":"([^"]*\.vtt)"`)
-	matchesSubs := reSubs.FindAllStringSubmatch(string(body), -1)
-
+	reSubs := regexp.MustCompile(`"file"\s*:\s*"([^"]*\.vtt)"`)
 	var subtitles []string
-	for _, match := range matchesSubs {
-		if len(match) >= 2 {
-			subtitles = append(subtitles, match[1])
+	for _, m := range reSubs.FindAllStringSubmatch(string(body), -1) {
+		if len(m) >= 2 {
+			subtitles = append(subtitles, strings.ReplaceAll(m[1], `\/`, `/`))
 		}
 	}
 
@@ -231,4 +295,3 @@ func (p *AniWatchProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 		SubtitleURLs: subtitles,
 	}, nil
 }
-

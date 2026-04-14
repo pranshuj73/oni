@@ -1,12 +1,12 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -61,49 +61,36 @@ func (p *AllAnimeProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 		}, nil
 	}
 
-	// Search for the anime
-	// Note: title is used in JSON, which is properly encoded by json.Marshal
-	// No need for manual escaping
-	searchQuery := `query($search: SearchInput, $limit: Int, $page: Int, $translationType: VaildTranslationTypeEnumType, $countryOrigin: VaildCountryOriginEnumType) {
-		shows(search: $search, limit: $limit, page: $page, translationType: $translationType, countryOrigin: $countryOrigin) {
-			edges {
-				_id
-				name
-				availableEpisodes
-				__typename
-			}
-		}
-	}`
+	// Search for the anime — POST with JSON body (matching jerry.sh)
+	searchQuery := `query($search: SearchInput, $limit: Int, $page: Int, $translationType: VaildTranslationTypeEnumType, $countryOrigin: VaildCountryOriginEnumType) { shows(search: $search, limit: $limit, page: $page, translationType: $translationType, countryOrigin: $countryOrigin) { edges { _id name availableEpisodes __typename } } }`
 
-	variables := map[string]interface{}{
-		"search": map[string]interface{}{
-			"allowAdult":   false,
-			"allowUnknown": false,
-			"query":        title, // JSON encoding handles special characters
+	payload, err := json.Marshal(map[string]interface{}{
+		"variables": map[string]interface{}{
+			"search": map[string]interface{}{
+				"allowAdult":   false,
+				"allowUnknown": false,
+				"query":        title,
+			},
+			"limit":           40,
+			"page":            1,
+			"translationType": "sub",
+			"countryOrigin":   "ALL",
 		},
-		"limit":           40,
-		"page":            1,
-		"translationType": "sub",
-		"countryOrigin":   "ALL",
-	}
-
-	variablesJSON, err := json.Marshal(variables)
+		"query": searchQuery,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal variables: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	params := url.Values{}
-	params.Add("variables", string(variablesJSON))
-	params.Add("query", searchQuery)
-
-	reqURL := fmt.Sprintf("%s?%s", allAnimeAPIURL, params.Encode())
-
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", allAnimeAPIURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", allAnimeRefr)
 	req.Header.Set("Referer", allAnimeRefr)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -114,6 +101,10 @@ func (p *AllAnimeProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body[:min(200, len(body))]))
 	}
 
 	var searchResp struct {
@@ -132,15 +123,30 @@ func (p *AllAnimeProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 	}
 
 	if err := json.Unmarshal(body, &searchResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal response (status %d): %w", resp.StatusCode, err)
 	}
 
 	if len(searchResp.Data.Shows.Edges) == 0 {
 		return nil, fmt.Errorf("no results found for: %s", title)
 	}
 
-	// Use the first result
+	// Find best matching show — allanime's ranking doesn't always put the exact match first.
+	// Normalize both strings (lowercase, strip non-alphanumeric) and look for an exact match,
+	// then fall back to the result with the most sub episodes (main series has more eps than specials).
+	normalize := func(s string) string {
+		s = strings.ToLower(s)
+		re := regexp.MustCompile(`[^a-z0-9 ]+`)
+		s = re.ReplaceAllString(s, " ")
+		return strings.Join(strings.Fields(s), " ")
+	}
+	titleNorm := normalize(title)
 	show := searchResp.Data.Shows.Edges[0]
+	for _, edge := range searchResp.Data.Shows.Edges {
+		if normalize(edge.Name) == titleNorm {
+			show = edge
+			break
+		}
+	}
 
 	// Save to cache
 	SaveProviderMapping("allanime", mediaID, show.ID, title)
@@ -154,37 +160,30 @@ func (p *AllAnimeProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 
 // GetVideoLink extracts video links from allanime
 func (p *AllAnimeProvider) GetVideoLink(ctx context.Context, episodeInfo *EpisodeInfo, quality string, subOrDub string) (*VideoData, error) {
-	// Fetch episode sources
-	episodeQuery := `query($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) {
-		episode(showId: $showId, translationType: $translationType, episodeString: $episodeString) {
-			episodeString
-			sourceUrls
-		}
-	}`
+	// Fetch episode sources — POST with JSON body (matching jerry.sh)
+	episodeQuery := `query($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) { episode(showId: $showId, translationType: $translationType, episodeString: $episodeString) { episodeString sourceUrls } }`
 
-	variables := map[string]interface{}{
-		"showId":          episodeInfo.ShowID,
-		"translationType": subOrDub,
-		"episodeString":   episodeInfo.EpisodeID,
-	}
-
-	variablesJSON, err := json.Marshal(variables)
+	payload, err := json.Marshal(map[string]interface{}{
+		"variables": map[string]interface{}{
+			"showId":          episodeInfo.ShowID,
+			"translationType": subOrDub,
+			"episodeString":   episodeInfo.EpisodeID,
+		},
+		"query": episodeQuery,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal variables: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	params := url.Values{}
-	params.Add("variables", string(variablesJSON))
-	params.Add("query", episodeQuery)
-
-	reqURL := fmt.Sprintf("%s?%s", allAnimeAPIURL, params.Encode())
-
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", allAnimeAPIURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", allAnimeRefr)
 	req.Header.Set("Referer", allAnimeRefr)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -197,6 +196,10 @@ func (p *AllAnimeProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body[:min(200, len(body))]))
+	}
+
 	var episodeResp struct {
 		Data struct {
 			Episode struct {
@@ -206,7 +209,7 @@ func (p *AllAnimeProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 	}
 
 	if err := json.Unmarshal(body, &episodeResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal response (status %d): %w", resp.StatusCode, err)
 	}
 
 	// Check if SourceUrls is empty or null
@@ -240,67 +243,77 @@ type sourceURLEntry struct {
 	Type       string `json:"type"`
 }
 
+// plainURLPriority defines preferred plain-URL sources (mpv+yt-dlp can handle these)
+var plainURLPriority = []string{"Fm-Hls", "Sup", "Uni", "Sw", "Mp4", "Ok", "Vg"}
+
 // extractLinks extracts video links from source URLs
 func (p *AllAnimeProvider) extractLinks(ctx context.Context, sourceURLs json.RawMessage) (map[string]string, error) {
-	// Try to parse as array of sourceURLEntry
 	var sources []sourceURLEntry
 	if err := json.Unmarshal(sourceURLs, &sources); err != nil {
-		// Fallback to old string manipulation for backward compatibility
 		return p.extractLinksLegacy(ctx, sourceURLs)
 	}
 
-	// Build resp string with sourceName :sourceUrl format
-	var resp strings.Builder
+	// Separate plain URLs (playable by mpv/yt-dlp) from CDN-encoded ones
+	plainURLs := make(map[string]string) // sourceName -> url
+	var encodedResp strings.Builder
 	for _, source := range sources {
-		// Extract the encoded URL (remove "--" prefix if present)
-		sourceURL := source.SourceURL
-		if strings.HasPrefix(sourceURL, "--") {
-			sourceURL = sourceURL[2:]
+		url := source.SourceURL
+		if strings.HasPrefix(url, "--") {
+			encoded := url[2:]
+			if encoded != "" && source.SourceName != "" {
+				encodedResp.WriteString(fmt.Sprintf("%s :%s\n", source.SourceName, encoded))
+			}
+		} else if url != "" && source.SourceName != "" &&
+			(strings.HasPrefix(url, "http") || strings.HasPrefix(url, "//")) {
+			plainURLs[source.SourceName] = url
 		}
+	}
 
-		if sourceURL != "" && source.SourceName != "" {
-			// Format: "sourceName :sourceUrl" (space before colon, no space after)
-			resp.WriteString(fmt.Sprintf("%s :%s\n", source.SourceName, sourceURL))
+	// Try CDN encoded sources first
+	if encodedResp.Len() > 0 {
+		type result struct {
+			links map[string]string
+			err   error
 		}
-	}
-	respStr := resp.String()
-
-	if respStr == "" {
-		return nil, fmt.Errorf("no source URLs found in response")
-	}
-
-	// Try all 5 providers in parallel (like jerry.sh does)
-	type providerResult struct {
-		links map[string]string
-		err   error
-	}
-	
-	results := make(chan providerResult, 5)
-	
-	// Try each provider (1-5) like jerry.sh
-	for providerNum := 1; providerNum <= 5; providerNum++ {
-		go func(num int) {
-			links, err := p.generateLinksForProvider(ctx, respStr, num)
-			results <- providerResult{links: links, err: err}
-		}(providerNum)
-	}
-	
-	// Collect all results
-	allLinks := make(map[string]string)
-	for i := 0; i < 5; i++ {
-		result := <-results
-		if result.err == nil && len(result.links) > 0 {
-			for quality, link := range result.links {
-				allLinks[quality] = link
+		ch := make(chan result, 5)
+		for num := 1; num <= 5; num++ {
+			go func(n int) {
+				links, err := p.generateLinksForProvider(ctx, encodedResp.String(), n)
+				ch <- result{links, err}
+			}(num)
+		}
+		allLinks := make(map[string]string)
+		for i := 0; i < 5; i++ {
+			r := <-ch
+			if r.err == nil {
+				for q, l := range r.links {
+					allLinks[q] = l
+				}
 			}
 		}
+		if len(allLinks) > 0 {
+			return allLinks, nil
+		}
 	}
-	
-	if len(allLinks) == 0 {
-		return nil, fmt.Errorf("no video links found: all providers failed")
+
+	// CDN failed — fall back to plain URLs in priority order
+	for _, name := range plainURLPriority {
+		if url, ok := plainURLs[name]; ok {
+			if strings.HasPrefix(url, "//") {
+				url = "https:" + url
+			}
+			return map[string]string{"best": url}, nil
+		}
 	}
-	
-	return allLinks, nil
+	// Any remaining plain URL
+	for _, url := range plainURLs {
+		if strings.HasPrefix(url, "//") {
+			url = "https:" + url
+		}
+		return map[string]string{"best": url}, nil
+	}
+
+	return nil, fmt.Errorf("no video links found: all sources failed")
 }
 
 // extractLinksLegacy is a fallback that uses string manipulation for backward compatibility
