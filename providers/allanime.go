@@ -3,10 +3,16 @@ package providers
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -160,14 +166,117 @@ func (p *AllAnimeProvider) GetEpisodeInfo(ctx context.Context, mediaID int, epis
 
 // GetVideoLink extracts video links from allanime
 func (p *AllAnimeProvider) GetVideoLink(ctx context.Context, episodeInfo *EpisodeInfo, quality string, subOrDub string) (*VideoData, error) {
-	// Fetch episode sources — POST with JSON body (matching jerry.sh)
+	sourceURLs, err := p.fetchSourceURLs(ctx, episodeInfo.ShowID, episodeInfo.EpisodeID, subOrDub)
+	if err != nil {
+		return nil, err
+	}
+
+	links, err := p.extractLinks(ctx, sourceURLs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract links: %w", err)
+	}
+	if len(links) == 0 {
+		return nil, fmt.Errorf("no video links found")
+	}
+
+	return &VideoData{
+		VideoURL: p.selectQuality(links, quality),
+		Referer:  allAnimeRefr,
+	}, nil
+}
+
+// fetchSourceURLs fetches episode source URLs using the persisted query approach (jerry.sh),
+// falling back to POST if the persisted query fails.
+func (p *AllAnimeProvider) fetchSourceURLs(ctx context.Context, showID, episodeID, subOrDub string) (json.RawMessage, error) {
+	// Primary: GET with persisted query hash + youtu-chan.com origin (bypasses CAPTCHA gate)
+	const queryHash = "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"
+	queryVars := fmt.Sprintf(`{"showId":%q,"translationType":%q,"episodeString":%q}`, showID, subOrDub, episodeID)
+	queryExt := fmt.Sprintf(`{"persistedQuery":{"version":1,"sha256Hash":%q}}`, queryHash)
+
+	apiURL := fmt.Sprintf("%s?variables=%s&extensions=%s",
+		allAnimeAPIURL, url.QueryEscape(queryVars), url.QueryEscape(queryExt))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Referer", allAnimeRefr)
+	req.Header.Set("Origin", "https://youtu-chan.com")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Response wraps encrypted payload in "tobeparsed"
+	var wrapper struct {
+		Data struct {
+			ToBeParsed string          `json:"tobeparsed"`
+			SourceURLs json.RawMessage `json:"sourceUrls"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Data.ToBeParsed != "" {
+		plain, err := decryptToBeParsed(wrapper.Data.ToBeParsed)
+		if err == nil {
+			var inner struct {
+				Episode struct {
+					SourceUrls json.RawMessage `json:"sourceUrls"`
+				} `json:"episode"`
+			}
+			if err := json.Unmarshal(plain, &inner); err == nil &&
+				len(inner.Episode.SourceUrls) > 0 &&
+				string(inner.Episode.SourceUrls) != "null" {
+				return inner.Episode.SourceUrls, nil
+			}
+		}
+	}
+
+	// Fallback: POST with full query body
+	return p.fetchSourceURLsPost(ctx, showID, episodeID, subOrDub)
+}
+
+// decryptToBeParsed decrypts the AES-256-CTR encrypted blob returned by the persisted query.
+// Format: [1 skip byte][12-byte IV][ciphertext][16-byte auth tag]
+// Key: SHA-256("Xot36i3lK3:v1"), CTR nonce: IV + big-endian uint32(2)
+func decryptToBeParsed(blob string) ([]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(blob)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) < 29 { // 1 + 12 + 0 ct + 16
+		return nil, fmt.Errorf("blob too short")
+	}
+	key := sha256.Sum256([]byte("Xot36i3lK3:v1"))
+	iv := raw[1:13]
+	ctrIV := make([]byte, 16)
+	copy(ctrIV, iv)
+	binary.BigEndian.PutUint32(ctrIV[12:], 2)
+
+	ct := raw[13 : len(raw)-16]
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+	plain := make([]byte, len(ct))
+	cipher.NewCTR(block, ctrIV).XORKeyStream(plain, ct)
+	return plain, nil
+}
+
+// fetchSourceURLsPost fetches episode source URLs via POST (fallback).
+func (p *AllAnimeProvider) fetchSourceURLsPost(ctx context.Context, showID, episodeID, subOrDub string) (json.RawMessage, error) {
 	episodeQuery := `query($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) { episode(showId: $showId, translationType: $translationType, episodeString: $episodeString) { episodeString sourceUrls } }`
 
 	payload, err := json.Marshal(map[string]interface{}{
 		"variables": map[string]interface{}{
-			"showId":          episodeInfo.ShowID,
+			"showId":          showID,
 			"translationType": subOrDub,
-			"episodeString":   episodeInfo.EpisodeID,
+			"episodeString":   episodeID,
 		},
 		"query": episodeQuery,
 	})
@@ -179,7 +288,6 @@ func (p *AllAnimeProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", allAnimeRefr)
 	req.Header.Set("Referer", allAnimeRefr)
@@ -190,12 +298,10 @@ func (p *AllAnimeProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer resp.Body.Close()
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body[:min(200, len(body))]))
 	}
@@ -207,33 +313,13 @@ func (p *AllAnimeProvider) GetVideoLink(ctx context.Context, episodeInfo *Episod
 			} `json:"episode"`
 		} `json:"data"`
 	}
-
 	if err := json.Unmarshal(body, &episodeResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response (status %d): %w", resp.StatusCode, err)
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
-	// Check if SourceUrls is empty or null
 	if len(episodeResp.Data.Episode.SourceUrls) == 0 || string(episodeResp.Data.Episode.SourceUrls) == "null" {
-		return nil, fmt.Errorf("no video links found: episode may not exist or source URLs are empty")
+		return nil, fmt.Errorf("no source URLs found (CAPTCHA or empty episode)")
 	}
-
-	// Parse source URLs
-	links, err := p.extractLinks(ctx, episodeResp.Data.Episode.SourceUrls)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract links: %w", err)
-	}
-
-	if len(links) == 0 {
-		return nil, fmt.Errorf("no video links found: could not extract links from source URLs")
-	}
-
-	// Select quality
-	videoURL := p.selectQuality(links, quality)
-
-	return &VideoData{
-		VideoURL: videoURL,
-		Referer:  allAnimeRefr,
-	}, nil
+	return episodeResp.Data.Episode.SourceUrls, nil
 }
 
 // sourceURLEntry represents a source URL entry from AllAnime API
